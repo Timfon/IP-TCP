@@ -20,8 +20,8 @@ type Interface struct {
   AssignedIP netip.Addr
   AssignedPrefix netip.Prefix
   UDPAddr netip.AddrPort
-  Neighbors []lnxconfig.NeighborConfig
   UpOrDown bool
+
 }
 
 type Neighbor struct {
@@ -30,7 +30,7 @@ type Neighbor struct {
 	InterfaceName string
 }
 type IPStack struct {
-  Interfaces []Interface
+ 	Interfaces []Interface
 	Neighbors  []Neighbor
 	RoutingMode RoutingMode
 
@@ -49,4 +49,34 @@ type IPStack struct {
 	// HOSTS ONLY:  Timing parameters for TCP
 	TcpRtoMin time.Duration
 	TcpRtoMax time.Duration
+
+	ForwardingTable map[netip.Prefix]Interface
+
+	Default_Addr netip.Prefix
+}
+
+func initializeStack(config *IPConfig) (*IPStack, error){
+
+	var ifaces []Interface
+	for _, interface := range in config.Interfaces {
+		iface := Interface{
+			Name: interface.Name,
+			AssignedIP: interface.AssignedIP,
+			AssignedPrefix: interface.AssignedPrefix,
+			UPDAddr: interface.UDPAddr,
+			UpOrDown: true
+		}
+		ifaces = append(ifaces, iface)
+	}
+
+
+}
+
+
+func interfaceR(){
+
+}
+
+func interfaceW(){
+
 }
