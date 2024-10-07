@@ -4,9 +4,10 @@ import (
   "fmt"
   "os"
 	"IP/pkg/lnxconfig"
-  "IP/pkg/ipstack"
-  "net"
-  "net/netip"
+  "bufio"
+  // "IP/pkg/ipstack"
+  // "net"
+  // "net/netip"
 )
 
 func main() {
@@ -19,9 +20,25 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+  var _ = lnxConfig
   
   //sets everything up
-  stack, err := initializeStack(lnxConfig);
+  // stack, err := initializeStack(lnxConfig);
+
+  reader := bufio.NewScanner(os.Stdin)
+  for {
+    fmt.Print("> ")
+    if !reader.Scan() {
+      break
+    }
+    input := reader.Text()
+    if input == "li" {
+      fmt.Println("Name "+ "Addr/Prefix " + "State")
+      for _, iface := range lnxConfig.Interfaces {
+        fmt.Println(iface.Name + " " + iface.AssignedPrefix.String() + " " + "UP") // change UP later to have the actual state of interface
+      }
+    }
+  }
 }
 
 
