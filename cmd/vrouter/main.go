@@ -27,7 +27,7 @@ func main() {
   
   stack, err := ipstack.InitializeStack(lnxConfig)
   fmt.Println(stack)
-  repl.StartRepl(lnxConfig)
+  go repl.StartRepl(lnxConfig)
   fmt.Println("hello")
 
 }
