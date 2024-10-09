@@ -2,11 +2,12 @@ package main
 
 import (
 	"fmt"
-  "bufio"
 	"log"
 	"net"
 	//"net/netip"
   "IP/pkg/lnxconfig"
+  "IP/pkg/ipstack"
+  "IP/pkg/repl"
 	"os"
 )
 
@@ -23,20 +24,11 @@ func main() {
 	}
 
 	// Goroutine for each interface
-  reader := bufio.NewScanner(os.Stdin)
-  for {
-    fmt.Print("> ")
-    if !reader.Scan() {
-      break
-    }
-    input := reader.Text()
-    if input == "li" {
-      fmt.Println("Name "+ "Addr/Prefix " + "State")
-      for _, iface := range lnxConfig.Interfaces {
-        fmt.Println(iface.Name + " " + iface.AssignedPrefix.String() + " " + "UP") // change UP later to have the actual state of interface
-      }
-    }
-  }
+  
+  stack, err := ipstack.InitializeStack(lnxConfig)
+  fmt.Println(stack)
+  go repl.StartRepl(lnxConfig)
+  fmt.Println("hello")
 
 }
 

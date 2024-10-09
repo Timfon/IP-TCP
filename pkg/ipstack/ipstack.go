@@ -1,4 +1,4 @@
-package protocol
+package ipstack
 
 import (
   "net/netip"
@@ -67,11 +67,3 @@ func initializeStack(config *IPConfig) (*IPStack, error){
 
 }
 
-
-func interfaceR(){
-
-}
-
-func interfaceW(){
-
-}
