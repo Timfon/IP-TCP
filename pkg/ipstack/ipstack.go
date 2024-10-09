@@ -16,18 +16,14 @@ const (
 )
 
 type Interface struct {
-  Name string
   AssignedIP netip.Addr
   AssignedPrefix netip.Prefix
   UDPAddr netip.AddrPort
-  UpOrDown bool
-
 }
 
 type Neighbor struct {
 	DestAddr netip.Addr
 	UDPAddr  netip.AddrPort
-	InterfaceName string
 }
 type IPStack struct {
  	Interfaces []Interface
@@ -60,7 +56,6 @@ func initializeStack(config *IPConfig) (*IPStack, error){
 	var ifaces []Interface
 	for _, interface := range in config.Interfaces {
 		iface := Interface{
-			Name: interface.Name,
 			AssignedIP: interface.AssignedIP,
 			AssignedPrefix: interface.AssignedPrefix,
 			UPDAddr: interface.UDPAddr,
