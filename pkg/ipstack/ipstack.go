@@ -16,18 +16,19 @@ const (
 )
 
 type Interface struct {
-  Name string
   AssignedIP netip.Addr
   AssignedPrefix netip.Prefix
   UDPAddr netip.AddrPort
-  UpOrDown bool
-
 }
 
+type Neighbor struct {
+	DestAddr netip.Addr
+	UDPAddr  netip.AddrPort
+}
 type IPStack struct {
  	Interfaces []Interface
-	Neighbors  []lnxconfig.NeighborConfig
-	RoutingMode lnxconfig.RoutingMode
+	Neighbors  []Neighbor
+	RoutingMode RoutingMode
 
 	// ROUTERS ONLY:  Neighbors to send RIP packets
 	RipNeighbors []netip.Addr
@@ -50,41 +51,19 @@ type IPStack struct {
 	Default_Addr netip.Prefix
 }
 
-func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
+func initializeStack(config *IPConfig) (*IPStack, error){
 
 	var ifaces []Interface
-  for _, interfaceConfig := range config.Interfaces {
+	for _, interface := range in config.Interfaces {
 		iface := Interface{
-			Name: interfaceConfig.Name,
-			AssignedIP: interfaceConfig.AssignedIP,
-			AssignedPrefix: interfaceConfig.AssignedPrefix,
-			UDPAddr: interfaceConfig.UDPAddr,
-			UpOrDown: true,
+			AssignedIP: interface.AssignedIP,
+			AssignedPrefix: interface.AssignedPrefix,
+			UPDAddr: interface.UDPAddr,
+			UpOrDown: true
 		}
 		ifaces = append(ifaces, iface)
 	}
-  
-  stack := &IPStack{
-    Interfaces: ifaces,
-    Neighbors: config.Neighbors,
-    RoutingMode: config.RoutingMode,
-    RipNeighbors: config.RipNeighbors,
-    StaticRoutes: config.StaticRoutes,
-    OriginatingPrefixes: config.OriginatingPrefixes,
-    RipPeriodicUpdateRate: config.RipPeriodicUpdateRate,
-    RipTimeoutThreshold: config.RipTimeoutThreshold,
-    TcpRtoMin: config.TcpRtoMin,
-    TcpRtoMax: config.TcpRtoMax,
-    ForwardingTable: make(map[netip.Prefix]Interface),
-  }
-  return stack, nil
-}
 
-
-func interfaceR(){
 
 }
 
-func interfaceW(){
-
-}
