@@ -176,6 +176,20 @@ func interfaceR(){
 
 }
 
-func interfaceW(){
-
+func matchPrefix(table *map[netip.Prefix]Interface, addr netip.Addr) (Interface, boolean, error){
+	var longest_prefix Interface
+	var b = 0
+	for k, v := range table { 
+		if k.contains(addr) {
+			if k.Bits() > b {
+				longest_prefix = v
+				b = k.Bits()
+			}
+		}
+	}
+	if longest_prefix == nil{
+		return nil, true, nil
+	}
+	return longest_prefix, false, nil	
 }
+
