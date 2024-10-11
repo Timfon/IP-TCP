@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
-	"net"
 	//"net/netip"
   "IP/pkg/lnxconfig"
   "IP/pkg/ipstack"
@@ -24,29 +22,19 @@ func main() {
 	}
 
 	// Goroutine for each interface
-  
   stack, err := ipstack.InitializeStack(lnxConfig)
-  fmt.Println(stack)
-  go repl.StartRepl(lnxConfig)
-  fmt.Println("hello")
+  if err != nil {
+	panic(err)
+	  }
 
-}
+  fmt.Println(stack) 
+  //need to consult forwarding table to know the src of a packet interesting
+  //hacky solution for now
 
-// handleUDPConnection manages the UDP connection in a separate goroutine
-func handleUDPConnection(conn *net.UDPConn) {
-	defer conn.Close()
+  go repl.StartRepl(stack, "router")
 
-	buffer := make([]byte, 1024)
-	for {
-		n, addr, err := conn.ReadFromUDP(buffer)
-		if err != nil {
-			log.Printf("Error reading from UDP connection: %s\n", err)
-			return
-		}
-		fmt.Printf("Received %s from %s\n", string(buffer[:n]), addr)
-		_, err = conn.WriteToUDP([]byte("Hello, vhost-> vrouter"), addr)
-		if err != nil {
-			fmt.Printf("Error writing to UDP address: %s\n", err)
-		}
-	}
+  for _, iface := range stack.Interfaces{
+	go ipstack.ReceiveIP(&iface.UDPAddr, &stack.ForwardingTable, iface, stack)
+  }
+
 }

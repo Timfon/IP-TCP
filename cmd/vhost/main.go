@@ -20,22 +20,16 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-  var _ = lnxConfig
-  
   //sets everything up
   stack, err := ipstack.InitializeStack(lnxConfig)
+  if err != nil {
+    panic(err)
+  }
   fmt.Println(stack)
-  go repl.StartRepl(lnxConfig)
-  fmt.Println("hello")
+  go repl.StartRepl(stack, "host")
 
-
-
-
-}
-
-
-
-
-
+  for _, iface := range stack.Interfaces{
+    go ipstack.ReceiveIP(&iface.UDPAddr, &stack.ForwardingTable, iface, stack)
+  }}
 
 
