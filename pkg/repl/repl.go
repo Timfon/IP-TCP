@@ -38,9 +38,7 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
               fmt.Printf("Invalid IP address: %v\n", err)
               continue
           }
-          
           messageBytes := []byte(parts[2])
-          
           if hostOrRouter == "host" {
               ipstack.SendIP(stack.Interfaces[0], destAddr, &stack.ForwardingTable, 0, messageBytes)
           } else if hostOrRouter == "router" {
@@ -60,14 +58,17 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
                       break
                   }
               }
-              
               if outgoingIface == nil {
                   fmt.Printf("Could not find interface")
                   continue
               }
-              
               ipstack.SendIP(*outgoingIface, destAddr, &stack.ForwardingTable, 0, messageBytes)
           }
+      } else if input == "lr" {
+        fmt.Println("T   Prefix   Next Hop   Cost")
+        for _, route := range stack.ForwardingTable.Routes {
+            fmt.Println("S   " + route.Prefix.String() + "   " + route.NextHop.String() + "   " + "1") //change cost later
+        }
       }
   }
 }

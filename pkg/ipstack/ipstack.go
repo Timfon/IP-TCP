@@ -174,7 +174,7 @@ func SendIP(iface Interface, dst netip.Addr, table *ForwardingTable, protocolNum
 		TTL:      16, // idk man
 		Protocol: int(protocolNum),
 		Checksum: 0, // Should be 0 until checksum is computed
-		Src:      iface.AssignedIP,// double check
+		Src:      iface.AssignedIP, // double check
 		Dst:      dst,
 		Options:  []byte{},
 	}

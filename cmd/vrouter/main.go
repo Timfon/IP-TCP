@@ -36,5 +36,5 @@ func main() {
   for _, iface := range stack.Interfaces{
 	go ipstack.ReceiveIP(&iface.UDPAddr, &stack.ForwardingTable, iface, stack)
   }
-
+  select{}
 }
