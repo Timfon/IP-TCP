@@ -21,10 +21,10 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
       if input == "li" {
         w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
           fmt.Fprintln(w, "Name\tAddr/Prefix\tState")
-          for _, route := range stack.Routes {
+          for _, route := range stack.ForwardingTable.Routes {
                 var ud = "down"
                 var iface = route.Iface
-                if iface {
+                if iface != (ipstack.Interface{}) {
                     if iface.UpOrDown {
                         ud = "up"
                     }
@@ -59,9 +59,9 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
         for _, route := range stack.ForwardingTable.Routes {
             switch route.RoutingMode {
             case 1:
-                fmt.Fprintln(w, "S\t" + route.Prefix.String() + "\t" + route.NextHop.String() + "\t" + "1")
+                fmt.Fprintln(w, "S\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + "1")
             case 2:
-                fmt.Fprintln(w, "R\t" + route.Prefix.String() + "\t" + route.NextHop.String() + "\t" + "1")
+                fmt.Fprintln(w, "R\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + "1")
             case 3:
                 fmt.Fprintln(w, "L\t" + route.Prefix.String() + "\tLOCAL:" + route.Iface.Name + "\t" + "1")
             }

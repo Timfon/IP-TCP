@@ -27,8 +27,10 @@ func main() {
   }
   go repl.StartRepl(stack, "host")
 
-  for _, iface := range stack.Interfaces{
-    go ipstack.ReceiveIP(iface, stack)
+  for _, route := range stack.ForwardingTable.Routes{
+    if route.Iface != (ipstack.Interface{}){
+      go ipstack.ReceiveIP(route, stack)
+    }
   }
 
   select{}

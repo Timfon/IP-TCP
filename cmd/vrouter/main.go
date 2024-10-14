@@ -31,8 +31,8 @@ func main() {
 
   go repl.StartRepl(stack, "router")
 
-  for _, iface := range stack.Interfaces{
-	go ipstack.ReceiveIP(&iface.UDPAddr, &stack.ForwardingTable, iface, stack)
+  for _, routes := range stack.ForwardingTable.Routes{
+	go ipstack.ReceiveIP(routes, stack)
   }
   select{}
 }

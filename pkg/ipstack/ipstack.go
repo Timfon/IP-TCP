@@ -99,6 +99,7 @@ func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
 
 		route := Route{
 			Iface: iface,
+			Prefix: interfaceConfig.AssignedPrefix,
 			RoutingMode: RoutingTypeLocal,
 			VirtualIP: interfaceConfig.AssignedIP,
 			Cost: -1,//change later
@@ -218,8 +219,9 @@ func SendIP(dst netip.Addr, stack *IPStack, protocolNum uint8, data []byte) (err
 }
 
 //maybe pass interface by reference
-func ReceiveIP(iface Interface, stack *IPStack) (*Packet, *net.UDPAddr, error) {
-    conn := iface.UdpSocket
+func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
+    conn := route.Iface.UdpSocket
+	addr := route.VirtualIP
 
 	for {
 		buffer := make([]byte, MAX_MESSAGE_SIZE)
@@ -259,7 +261,7 @@ func ReceiveIP(iface Interface, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 
 		// Next, get the message, which starts after the header
 		message := buffer[headerSize:]
-		if hdr.Dst == addr.Addr() {
+		if hdr.Dst == addr {
 			if hdr.TTL == 0 {
 				fmt.Println("TTL is 0, dropping packet")
 				continue
@@ -276,16 +278,15 @@ func ReceiveIP(iface Interface, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 				fmt.Printf("No handler for protocol %d\n", hdr.Protocol)
 			}
 		} else {
-			
 			// Forward the packet
-			route, found, _ := MatchPrefix(&stack.ForwardingTable, hdr.Dst)
+			nroute, found, _ := MatchPrefix(&stack.ForwardingTable, hdr.Dst)
 			if !found {
 				fmt.Println("No route found for packet")
 				//what to do here?
 				continue
 			}
 			fmt.Println("Forwarding packet to ", route.VirtualIP)
-			SendIP(route.VirtualIP, stack, uint8(hdr.Protocol), message)
+			SendIP(nroute.VirtualIP, stack, uint8(hdr.Protocol), message)
 		}
 		// Finally, print everything out
 		// fmt.Printf("Received IP packet from %s\nHeader:  %v\nChecksum:  %s\nMessage:  %s\n",
