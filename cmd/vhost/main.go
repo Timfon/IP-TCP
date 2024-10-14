@@ -25,11 +25,10 @@ func main() {
   if err != nil {
     panic(err)
   }
-  fmt.Println(stack)
   go repl.StartRepl(stack, "host")
 
   for _, iface := range stack.Interfaces{
-    go ipstack.ReceiveIP(&iface.UDPAddr, &stack.ForwardingTable, iface, stack)
+    go ipstack.ReceiveIP(iface, stack)
   }
 
   select{}

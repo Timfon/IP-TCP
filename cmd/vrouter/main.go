@@ -26,8 +26,6 @@ func main() {
   if err != nil {
 	panic(err)
 	  }
-
-  fmt.Println(stack) 
   //need to consult forwarding table to know the src of a packet interesting
   //hacky solution for now
 

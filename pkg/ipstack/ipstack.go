@@ -18,15 +18,29 @@ const (
 	RoutingTypeNone   RoutingMode = 0
 	RoutingTypeStatic RoutingMode = 1
 	RoutingTypeRIP    RoutingMode = 2
+	RoutingTypeLocal  RoutingMode = 3
+)
+
+
+
+const (
+	MAX_MESSAGE_SIZE = 1400
 )
 
 type Route struct {
+	Iface Interface
 	RoutingMode RoutingMode
 	Prefix netip.Prefix
-	NextHop netip.Addr
-	NextHopUDP netip.AddrPort
+	VirtualIP netip.Addr
 	Cost int
 }
+
+type Interface struct {
+	Name string
+	UdpSocket *net.UDPConn
+	UpOrDown bool
+  
+  }
 
 //forwarding table is a slice/slice of routes
 type ForwardingTable struct {
@@ -35,14 +49,6 @@ type ForwardingTable struct {
 
 func AddToForwardingTable(table *ForwardingTable, route Route) {
 	table.Routes = append(table.Routes, route)
-}
-
-type Interface struct {
-  Name string
-  AssignedIP netip.Addr
-  AssignedPrefix netip.Prefix
-  UDPAddr netip.AddrPort
-  UpOrDown bool
 }
 
 type IPStack struct {
@@ -76,27 +82,45 @@ func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
 	var ifaces []Interface
 	var routes []Route
 	for _, interfaceConfig := range config.Interfaces {
+
+		udpPort := interfaceConfig.UDPAddr
+
+		remoteAddr := net.UDPAddrFromAddrPort(udpPort)
+		conn, err := net.ListenUDP("udp4", remoteAddr)
+		if err != nil {
+			log.Panicln("Dial: ", err)
+		}
+
 		iface := Interface{
 			Name: interfaceConfig.Name,
-			AssignedIP: interfaceConfig.AssignedIP,
-			AssignedPrefix: interfaceConfig.AssignedPrefix,
-			UDPAddr: interfaceConfig.UDPAddr,
+			UdpSocket: conn,
 			UpOrDown: true,
 		}
 
 		route := Route{
-			RoutingMode: RoutingTypeStatic,
-			Prefix: interfaceConfig.AssignedPrefix,
-			NextHop: interfaceConfig.AssignedIP,
-			NextHopUDP: interfaceConfig.UDPAddr,
+			Iface: iface,
+			RoutingMode: RoutingTypeLocal,
+			VirtualIP: interfaceConfig.AssignedIP,
 			Cost: -1,//change later
 		}
 		routes = append(routes, route)
 		ifaces = append(ifaces, iface)
 	}
+
+	for p, addr := range config.StaticRoutes {
+		route := Route{
+			RoutingMode: RoutingTypeStatic,
+			Prefix: p,
+			VirtualIP: addr,
+			Cost: -1,
+		}
+		routes = append(routes, route)
+	}
+
+
   stack := &IPStack{
-	  Handlers: make(map[uint8]HandlerFunc),
-	  Interfaces: ifaces,
+	Handlers: make(map[uint8]HandlerFunc),
+	Interfaces: ifaces,
     Neighbors: config.Neighbors,
     RoutingMode: config.RoutingMode,
     RipNeighbors: config.RipNeighbors,
@@ -115,53 +139,37 @@ return stack, nil
 }
 
 //sending/receiving packets logic:
-
-const (
-	MaxMessageSize = 1400
-)
 type Packet struct {
 	Header ipv4header.IPv4Header
 	Body []byte
 }
+
 type HandlerFunc = func (*Packet, []interface{})
-func (stack *IPStack) RegisterRecvHandler (protocolNum uint8, callbackFunc HandlerFunc) {
-	stack.Handlers[protocolNum] = callbackFunc
+	func (stack *IPStack) RegisterRecvHandler (protocolNum uint8, callbackFunc HandlerFunc) {
+		stack.Handlers[protocolNum] = callbackFunc
 }
 func TestPacketHandler(packet *Packet, conn net.UDPConn) {
 	fmt.Println("Test packet received")
 }
 
-// func RIPHandler(packet *Packet, args []interface{}) {
-// 	fmt.Println("RIP packet received")
-// }
-
 //pass interface by reference?
-func SendIP(iface Interface, dst netip.Addr, table *ForwardingTable, protocolNum uint8, data []byte) (error) { 
+func SendIP(dst netip.Addr, stack *IPStack, protocolNum uint8, data []byte) (error) { 
 	// Do we do the UDP stuff here or somewhere else?? 
 	// Turn the address string into a UDPAddr for the connection
-	route, found, _ := MatchPrefix(table, dst)
+	table:= stack.ForwardingTable
+	route, found, _ := MatchPrefix(&table, dst)
+
 	if !found {
-		fmt.Println("No route found for packet")
+		fmt.Println("No matching prefix found")
 		return nil
 	}
-
-	// bindAddrString := fmt.Sprintf(":%s", iface.UDPAddr.Port())
-	// bindLocalAddr, err := net.ResolveUDPAddr("udp4", bindAddrString)
-	// if err != nil {
-	// 	log.Panicln("Error resolving address:  ", err)
-	// }
-	
-	remoteAddrString := fmt.Sprintf("%s:%s", route.NextHopUDP.Addr(),route.NextHopUDP.Port())
-	remoteAddr, err := net.ResolveUDPAddr("udp4", remoteAddrString)
-	if err != nil {
-		log.Panicln("Error resolving remote address:  ", err)
-		return err	
+	var neighborUDP netip.AddrPort
+	for _, neighbor := range stack.Neighbors {
+		if neighbor.DestAddr == dst {
+			neighborUDP = neighbor.UDPAddr
+		}	
 	}
 
-	conn, err := net.ListenUDP("udp4", remoteAddr)
-	if err != nil {
-		log.Panicln("Dial: ", err)
-	}
 
 	hdr := ipv4header.IPv4Header{
 		Version:  4,
@@ -174,7 +182,7 @@ func SendIP(iface Interface, dst netip.Addr, table *ForwardingTable, protocolNum
 		TTL:      16, // idk man
 		Protocol: int(protocolNum),
 		Checksum: 0, // Should be 0 until checksum is computed
-		Src:      iface.AssignedIP, // double check
+		Src:      route.VirtualIP, // double check
 		Dst:      dst,
 		Options:  []byte{},
 	}
@@ -201,7 +209,7 @@ func SendIP(iface Interface, dst netip.Addr, table *ForwardingTable, protocolNum
 	// Send the message to the "link-layer" addr:port on UDP
 	// FOr h1:  send to port 5002
 	// ONE CALL TO WriteToUDP => 1 PACKET
-	bytesWritten, err := conn.WriteToUDP(bytesToSend, remoteAddr)
+	bytesWritten, err := route.Iface.UdpSocket.WriteToUDP(bytesToSend,  net.UDPAddrFromAddrPort(neighborUDP))
 	if err != nil {
 		log.Panicln("Error writing to socket: ", err)
 	}
@@ -210,21 +218,11 @@ func SendIP(iface Interface, dst netip.Addr, table *ForwardingTable, protocolNum
 }
 
 //maybe pass interface by reference
-func ReceiveIP(addr *netip.AddrPort, table *ForwardingTable, iface Interface, stack *IPStack) (*Packet, *net.UDPAddr, error) {
-    listenString := fmt.Sprintf(":%d", iface.UDPAddr.Port())
-    listenAddr, err := net.ResolveUDPAddr("udp4", listenString)
-    if err != nil {
-        log.Fatalln("Error resolving UDP address: ", err)
-    }
-    
-    // Create a new variable for the UDP connection
-    conn, err := net.ListenUDP("udp4", listenAddr)
-    if err != nil {
-        log.Panicln("Could not bind to UDP port: ", err)
-    }
+func ReceiveIP(iface Interface, stack *IPStack) (*Packet, *net.UDPAddr, error) {
+    conn := iface.UdpSocket
 
 	for {
-		buffer := make([]byte, MaxMessageSize)
+		buffer := make([]byte, MAX_MESSAGE_SIZE)
 
 		_, sourceAddr, err := conn.ReadFromUDP(buffer)
 		if err != nil {
@@ -278,15 +276,16 @@ func ReceiveIP(addr *netip.AddrPort, table *ForwardingTable, iface Interface, st
 				fmt.Printf("No handler for protocol %d\n", hdr.Protocol)
 			}
 		} else {
+			
 			// Forward the packet
-			route, found, _ := MatchPrefix(table, hdr.Dst)
+			route, found, _ := MatchPrefix(&stack.ForwardingTable, hdr.Dst)
 			if !found {
 				fmt.Println("No route found for packet")
 				//what to do here?
 				continue
 			}
-			fmt.Println("Forwarding packet to ", route.NextHop)
-			SendIP(iface, route.NextHop, table, uint8(hdr.Protocol), message)
+			fmt.Println("Forwarding packet to ", route.VirtualIP)
+			SendIP(route.VirtualIP, stack, uint8(hdr.Protocol), message)
 		}
 		// Finally, print everything out
 		// fmt.Printf("Received IP packet from %s\nHeader:  %v\nChecksum:  %s\nMessage:  %s\n",
@@ -333,8 +332,4 @@ func MatchPrefix(table *ForwardingTable, addr netip.Addr) (Route, bool, error) {
 		return Route{}, false, nil
 	}
 	return longestRoute, true, nil
-}
-
-func interfaceR(){
-
 }
