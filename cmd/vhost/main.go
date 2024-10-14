@@ -25,6 +25,9 @@ func main() {
   if err != nil {
     panic(err)
   }
+
+  stack.RegisterRecvHandler(0, ipstack.TestPacketHandler)
+
   go repl.StartRepl(stack, "host")
 
   for _, route := range stack.ForwardingTable.Routes{

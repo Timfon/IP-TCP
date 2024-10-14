@@ -28,7 +28,7 @@ func main() {
 	  }
   //need to consult forwarding table to know the src of a packet interesting
   //hacky solution for now
-
+  stack.RegisterRecvHandler(0, ipstack.TestPacketHandler)
   go repl.StartRepl(stack, "router")
 
   for _, routes := range stack.ForwardingTable.Routes{

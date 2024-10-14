@@ -149,8 +149,11 @@ type HandlerFunc = func (*Packet, []interface{})
 	func (stack *IPStack) RegisterRecvHandler (protocolNum uint8, callbackFunc HandlerFunc) {
 		stack.Handlers[protocolNum] = callbackFunc
 }
-func TestPacketHandler(packet *Packet, conn net.UDPConn) {
+func TestPacketHandler(packet *Packet, args []interface{}) {
 	fmt.Println("Test packet received")
+
+	fmt.Println("Header: ", packet.Header)
+	fmt.Println("Body: ", string(packet.Body))
 }
 
 //pass interface by reference?
