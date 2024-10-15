@@ -34,5 +34,7 @@ func main() {
   for _, routes := range stack.ForwardingTable.Routes{
 	go ipstack.ReceiveIP(routes, stack)
   }
+
+  //extra thread for sending periodic rip commands
   select{}
 }

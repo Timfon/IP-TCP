@@ -7,6 +7,7 @@ import (
   "strings"
   "IP/pkg/ipstack"
   "net/netip"
+  "IP/pkg/ipv4header"
 )
 
 func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
@@ -52,7 +53,39 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
               continue
           }
           messageBytes := []byte(parts[2])
-          ipstack.SendIP(destAddr, stack, 0, messageBytes)
+
+        table := stack.ForwardingTable
+          route, found, _ := ipstack.MatchPrefix(&table, destAddr)
+          if !found {
+              fmt.Println("No matching prefix found")
+              continue
+          }
+
+          var srcIP netip.Addr
+          if route.RoutingMode == 4{
+            srcIP = route.VirtualIP
+          } else {
+            iroute, _, _ := ipstack.MatchPrefix(&table, route.VirtualIP)
+            srcIP = iroute.VirtualIP
+          }
+
+          hdr := ipv4header.IPv4Header{
+            Version:  4,
+            Len: 	20, // Header length is always 20 when no IP options
+            TOS:      0,
+            TotalLen: ipv4header.HeaderLen + len(messageBytes),
+            ID:       0,
+            Flags:    0,
+            FragOff:  0,
+            TTL:      16, // idk man
+            Protocol: 0,
+            Checksum: 0, // Should be 0 until checksum is computed
+            Src:      srcIP, // double check
+            Dst:      destAddr,
+            Options:  []byte{},
+        }
+        ipstack.SendIP(stack, &hdr, messageBytes)
+
       } else if input == "lr" {
         w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
         fmt.Fprintln(w, "T\tPrefix\tNext Hop\tCost")

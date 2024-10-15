@@ -9,6 +9,7 @@ import (
   "github.com/google/netstack/tcpip/header"
   "fmt"
   "log"
+  "sync"
 )
 
 
@@ -47,7 +48,10 @@ type ForwardingTable struct {
 	Routes []Route
 }
 
+var mu sync.Mutex
 func AddToForwardingTable(table *ForwardingTable, route Route) {
+	mu.Lock()
+	defer mu.Unlock()
 	table.Routes = append(table.Routes, route)
 }
 
@@ -119,6 +123,8 @@ func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
 	}
 
 
+
+
   stack := &IPStack{
 	Handlers: make(map[uint8]HandlerFunc),
 	Interfaces: ifaces,
@@ -136,6 +142,12 @@ func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
 		Routes: routes,
 	},
 }
+
+//send over
+/*
+for _, rn := range config.RipNeighbors {
+
+}*/
 return stack, nil
 }
 
@@ -150,70 +162,65 @@ type HandlerFunc = func (*Packet, []interface{})
 		stack.Handlers[protocolNum] = callbackFunc
 }
 func TestPacketHandler(packet *Packet, args []interface{}) {
-	fmt.Println("Test packet received")
-
-	fmt.Println("Header: ", packet.Header)
-	fmt.Println("Body: ", string(packet.Body))
+	srcIP := packet.Header.Src
+	dstIP := packet.Header.Dst
+	ttl := packet.Header.TTL
+	data := string(packet.Body) 
+	fmt.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n", srcIP, dstIP, ttl, data)
 }
 
 //pass interface by reference?
-func SendIP(dst netip.Addr, stack *IPStack, protocolNum uint8, data []byte) (error) { 
+func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) { 
 	// Do we do the UDP stuff here or somewhere else?? 
 	// Turn the address string into a UDPAddr for the connection
+	dst:= header.Dst
 	table:= stack.ForwardingTable
 	route, found, _ := MatchPrefix(&table, dst)
-
 	if !found {
 		fmt.Println("No matching prefix found")
 		return nil
 	}
-	var neighborUDP netip.AddrPort
-	for _, neighbor := range stack.Neighbors {
-		if neighbor.DestAddr == dst {
-			neighborUDP = neighbor.UDPAddr
-		}	
+
+	var nextHop netip.AddrPort
+	var conn *net.UDPConn
+
+	if route.RoutingMode == RoutingTypeLocal {
+		conn = route.Iface.UdpSocket
+		for _, n := range stack.Neighbors {
+			if n.DestAddr == dst {
+				nextHop = n.UDPAddr
+			}
+		}
+	  } else {
+		iroute, _, _ := MatchPrefix(&table, route.VirtualIP)
+		conn = iroute.Iface.UdpSocket
+		for _, n := range stack.Neighbors {
+			if n.DestAddr == route.VirtualIP {
+				nextHop = n.UDPAddr
+			}
+		}
 	}
 
-
-	hdr := ipv4header.IPv4Header{
-		Version:  4,
-		Len: 	20, // Header length is always 20 when no IP options
-		TOS:      0,
-		TotalLen: ipv4header.HeaderLen + len(data),
-		ID:       0,
-		Flags:    0,
-		FragOff:  0,
-		TTL:      16, // idk man
-		Protocol: int(protocolNum),
-		Checksum: 0, // Should be 0 until checksum is computed
-		Src:      route.VirtualIP, // double check
-		Dst:      dst,
-		Options:  []byte{},
+	if !nextHop.IsValid(){
+		fmt.Println("No valid next hop port found")
 	}
-    // Assemble the header into a byte array
-	headerBytes, err := hdr.Marshal()
+
+	headerBytes, err := header.Marshal()
+	header.Checksum = int(ComputeChecksum(headerBytes))
+	if err != nil {
+		log.Fatalln("Error marshalling header:  ", err)
+	}
+	headerBytes, err = header.Marshal()
 	if err != nil {
 		log.Fatalln("Error marshalling header:  ", err)
 	}
 
-	// Compute the checksum (see below)
-	// Cast back to an int, which is what the Header structure expects
-	hdr.Checksum = int(ComputeChecksum(headerBytes))
-
-	headerBytes, err = hdr.Marshal()
-	if err != nil {
-		log.Fatalln("Error marshalling header:  ", err)
-	}
-
-	// Append header + message into one byte array
 	bytesToSend := make([]byte, 0, len(headerBytes)+len(data))
 	bytesToSend = append(bytesToSend, headerBytes...)
-	bytesToSend = append(bytesToSend, []byte(data)...)
+	bytesToSend = append(bytesToSend, data...)
+	
+	bytesWritten, err := conn.WriteToUDP(bytesToSend,  net.UDPAddrFromAddrPort(nextHop))
 
-	// Send the message to the "link-layer" addr:port on UDP
-	// FOr h1:  send to port 5002
-	// ONE CALL TO WriteToUDP => 1 PACKET
-	bytesWritten, err := route.Iface.UdpSocket.WriteToUDP(bytesToSend,  net.UDPAddrFromAddrPort(neighborUDP))
 	if err != nil {
 		log.Panicln("Error writing to socket: ", err)
 	}
@@ -280,20 +287,10 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 			} else {
 				fmt.Printf("No handler for protocol %d\n", hdr.Protocol)
 			}
-		} else {
-			// Forward the packet
-			nroute, found, _ := MatchPrefix(&stack.ForwardingTable, hdr.Dst)
-			if !found {
-				fmt.Println("No route found for packet")
-				//what to do here?
-				continue
-			}
+		} else {	
 			fmt.Println("Forwarding packet to ", route.VirtualIP)
-			SendIP(nroute.VirtualIP, stack, uint8(hdr.Protocol), message)
+			SendIP(stack, hdr, message)
 		}
-		// Finally, print everything out
-		// fmt.Printf("Received IP packet from %s\nHeader:  %v\nChecksum:  %s\nMessage:  %s\n",
-		// 	sourceAddr.String(), hdr, checksumState, string(message))
 	}
 
 }
