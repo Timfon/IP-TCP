@@ -206,6 +206,7 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 	}
 
 	headerBytes, err := header.Marshal()
+
 	header.Checksum = int(ComputeChecksum(headerBytes))
 	if err != nil {
 		log.Fatalln("Error marshalling header:  ", err)
@@ -260,28 +261,26 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 		// See ValudateChecksum for details.
 		headerBytes := buffer[:headerSize]
 		checksumFromHeader := uint16(hdr.Checksum)
-		computedChecksum := ValidateChecksum(headerBytes, checksumFromHeader)
 
+		message := buffer[headerSize:]
+		packet := &Packet {
+			Header: *hdr,
+			Body: message,
+		}
+		hdr.Checksum = 0
+		computedChecksum := ValidateChecksum(headerBytes, checksumFromHeader)
 		if computedChecksum != checksumFromHeader {
 			fmt.Println("Checksums do not match, dropping packet")
 			continue
 		}
-
 		hdr.TTL = hdr.TTL - 1
-
 		// Next, get the message, which starts after the header
-		message := buffer[headerSize:]
 		if hdr.Dst == addr {
+			fmt.Println("made it here!")
 			if hdr.TTL == 0 {
 				fmt.Println("TTL is 0, dropping packet")
 				continue
 			}
-
-			packet := &Packet {
-				Header: *hdr,
-				Body: message,
-			}
-
 			if handler, exists := stack.Handlers[uint8(hdr.Protocol)]; exists {
 				handler(packet, []interface{}{conn, sourceAddr})
 			} else {
@@ -292,7 +291,6 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 			SendIP(stack, hdr, message)
 		}
 	}
-
 }
 
 func ValidateChecksum(b []byte, fromHeader uint16) uint16 {
