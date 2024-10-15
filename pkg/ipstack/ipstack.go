@@ -40,7 +40,6 @@ type Interface struct {
 	Name string
 	UdpSocket *net.UDPConn
 	UpOrDown bool
-  
   }
 
 //forwarding table is a slice/slice of routes
@@ -161,6 +160,7 @@ type HandlerFunc = func (*Packet, []interface{})
 	func (stack *IPStack) RegisterRecvHandler (protocolNum uint8, callbackFunc HandlerFunc) {
 		stack.Handlers[protocolNum] = callbackFunc
 }
+
 func TestPacketHandler(packet *Packet, args []interface{}) {
 	srcIP := packet.Header.Src
 	dstIP := packet.Header.Dst
@@ -245,7 +245,8 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 		// NOTE:  This does not validate the checksum or check any fields
 		// (You'll need to do this part yourself)
 		hdr, err := ipv4header.ParseHeader(buffer)
-
+		hdr.TTL = hdr.TTL - 1
+		
 		if err != nil {
 			// What should you if the message fails to parse?
 			// Your node should not crash or exit when you get a bad message.
@@ -254,7 +255,7 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 			continue
 		}
 		headerSize := hdr.Len
-
+		
 		// Validate the checksum
 		// The checksum is correct if the value we computed matches
 		// the value stored in the header.
@@ -273,10 +274,9 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 			fmt.Println("Checksums do not match, dropping packet")
 			continue
 		}
-		hdr.TTL = hdr.TTL - 1
+
 		// Next, get the message, which starts after the header
 		if hdr.Dst == addr {
-			fmt.Println("made it here!")
 			if hdr.TTL == 0 {
 				fmt.Println("TTL is 0, dropping packet")
 				continue

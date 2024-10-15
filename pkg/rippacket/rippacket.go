@@ -1,4 +1,4 @@
-/*package rippacket
+package rippacket
 
 import (
 	"fmt"
@@ -22,4 +22,3 @@ func RipPacketHandler(packet *Packet, args []interface{}){
 //get udp address from neighbors
 //
 
-*/

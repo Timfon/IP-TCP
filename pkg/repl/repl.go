@@ -77,7 +77,7 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
             ID:       0,
             Flags:    0,
             FragOff:  0,
-            TTL:      16, // idk man
+            TTL:      32, // idk man
             Protocol: 0,
             Checksum: 0, // Should be 0 until checksum is computed
             Src:      srcIP, // double check
