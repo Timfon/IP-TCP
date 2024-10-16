@@ -146,7 +146,7 @@ func CheckRouteTimeouts(stack *ipstack.IPStack) {
     now := time.Now()
     validRoutes := []ipstack.Route{}
     for _, route := range stack.ForwardingTable.Routes {
-        if now.Sub(route.UpdateTime) > 12*time.Second {
+        if now.Sub(route.UpdateTime) > 12 * time.Second {
             fmt.Println("Route timeout: ", route.Prefix)
             // Route has expired, set cost to infinity and remove after triggering update
             route.Cost = 16 // Set to infinity
@@ -173,21 +173,18 @@ func RipPacketHandler(packet *ipstack.Packet, args []interface{}){
     }
 }
 
-//TODO: Implement periodic RIP updates
 func SendPeriodicRIP(stack *ipstack.IPStack){
-    //RIPNeighbor is a netip.Addr
     for {
-
+        time.Sleep(5 * time.Second)
+        SendRIPResponse(stack)
     }
-
 }
 
 func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
     msg := DeserializeRIPMessage(packet.Body)
-    srcAddr := packet.Header.Src
-
-
-    //Kinda jank way of getting the interface of the src address??
+    srcAddr := packet.Header.Src //D from Neighbor
+    
+    //Kinda jank way of getting the interface of the src address?? Prob should comment out
     iface := ipstack.Interface{}
     for _, route := range stack.ForwardingTable.Routes {
         if route.VirtualIP == srcAddr {
@@ -195,6 +192,8 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
             break
         }
     }
+
+    //updatedEntries := []RIPEntry{} // keep track of updated entries
 
     for _, entry := range msg.Entries {
         // Convert Address and Mask to netip.Addr
@@ -215,25 +214,27 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
             fmt.Println("Error matching prefix: ", err)
             continue
         }
+        
+        totalCost := entry.Cost + 1 // Add 1 to the cost to account for the link to the neighbor?
 
         if found {
             // Existing route
             c_old := route.Cost
 
             // Compare costs and update accordingly
-            if entry.Cost < c_old {
+            if totalCost < c_old {
                 // Better route, update table
-                route.Cost = entry.Cost
+                route.Cost = totalCost
                 route.VirtualIP = srcAddr // N = source address of the packet
                 route.UpdateTime = time.Now()
-            } else if entry.Cost > c_old {
+            } else if totalCost > c_old {
                 if route.VirtualIP == srcAddr {
                     // Topology has changed, higher cost from same neighbor
-                    route.Cost = entry.Cost
+                    route.Cost = totalCost
                     route.UpdateTime = time.Now()
                 }
                 // Else: we ignore the update because the current route is better
-            } else if entry.Cost == c_old && route.VirtualIP == srcAddr {
+            } else if totalCost == c_old && route.VirtualIP == srcAddr {
                 //refresh the timeout
                 route.UpdateTime = time.Now()
             }
@@ -242,8 +243,8 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
             newRoute := ipstack.Route{
                 Iface:    iface,
                 Prefix:    prefix,
-                Cost:      entry.Cost,
-                VirtualIP:   srcAddr,
+                Cost:      totalCost,
+                VirtualIP:   srcAddr, //Destination address
                 UpdateTime: time.Now(),
                 RoutingMode: ipstack.RoutingTypeRIP,
             }
