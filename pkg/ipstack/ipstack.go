@@ -33,7 +33,8 @@ type Route struct {
 	RoutingMode RoutingMode
 	Prefix netip.Prefix
 	VirtualIP netip.Addr
-	Cost int
+	UpdateTime time.Time
+	Cost uint32
 }
 
 type Interface struct {
@@ -105,7 +106,7 @@ func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
 			Prefix: interfaceConfig.AssignedPrefix,
 			RoutingMode: RoutingTypeLocal,
 			VirtualIP: interfaceConfig.AssignedIP,
-			Cost: -1,//change later
+			Cost: 0,//change later
 		}
 		routes = append(routes, route)
 		ifaces = append(ifaces, iface)
@@ -116,14 +117,10 @@ func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
 			RoutingMode: RoutingTypeStatic,
 			Prefix: p,
 			VirtualIP: addr,
-			Cost: -1,
+			Cost: 10, //higher cost for a static route??
 		}
 		routes = append(routes, route)
 	}
-
-
-
-
   stack := &IPStack{
 	Handlers: make(map[uint8]HandlerFunc),
 	Interfaces: ifaces,
@@ -236,8 +233,7 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 
 	for {
 		buffer := make([]byte, MAX_MESSAGE_SIZE)
-
-		_, sourceAddr, err := conn.ReadFromUDP(buffer)
+		_, _, err := conn.ReadFromUDP(buffer)
 		if err != nil {
 			log.Panicln("Error reading from UDP socket ", err)
 		}
@@ -268,8 +264,10 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 			Header: *hdr,
 			Body: message,
 		}
+		
 		hdr.Checksum = 0
 		computedChecksum := ValidateChecksum(headerBytes, checksumFromHeader)
+		fmt.Println(computedChecksum, checksumFromHeader)
 		if computedChecksum != checksumFromHeader {
 			fmt.Println("Checksums do not match, dropping packet")
 			continue
@@ -282,7 +280,8 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 				continue
 			}
 			if handler, exists := stack.Handlers[uint8(hdr.Protocol)]; exists {
-				handler(packet, []interface{}{conn, sourceAddr})
+				//for tcp, may need to change this code to pass in different parameters for rip, tcp, and test, although test doesn't need any parameters other than the packet. 
+				handler(packet, []interface{}{stack})
 			} else {
 				fmt.Printf("No handler for protocol %d\n", hdr.Protocol)
 			}

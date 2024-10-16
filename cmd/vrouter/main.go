@@ -7,6 +7,7 @@ import (
   "IP/pkg/ipstack"
   "IP/pkg/repl"
 	"os"
+	"IP/pkg/rippacket"
 )
 
 func main() {
@@ -29,6 +30,8 @@ func main() {
   //need to consult forwarding table to know the src of a packet interesting
   //hacky solution for now
   stack.RegisterRecvHandler(0, ipstack.TestPacketHandler)
+  stack.RegisterRecvHandler(200, rippacket.RipPacketHandler)
+
   go repl.StartRepl(stack, "router")
 
   for _, routes := range stack.ForwardingTable.Routes{

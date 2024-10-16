@@ -8,6 +8,7 @@ import (
   // "net"
   "IP/pkg/ipstack"
   // "net/netip"
+  "IP/pkg/rippacket"
 )
 
 func main() {
@@ -27,6 +28,7 @@ func main() {
   }
 
   stack.RegisterRecvHandler(0, ipstack.TestPacketHandler)
+  stack.RegisterRecvHandler(200, rippacket.RipPacketHandler)
 
   go repl.StartRepl(stack, "host")
 
