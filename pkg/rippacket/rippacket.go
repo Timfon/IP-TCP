@@ -186,6 +186,8 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
     msg := DeserializeRIPMessage(packet.Body)
     srcAddr := packet.Header.Src
 
+
+    //Kinda jank way of getting the interface of the src address??
     iface := ipstack.Interface{}
     for _, route := range stack.ForwardingTable.Routes {
         if route.VirtualIP == srcAddr {
