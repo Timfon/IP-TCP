@@ -88,7 +88,7 @@ func SendRIPRequest(stack *ipstack.IPStack) {
     }
 }
 
-func SendRIPResponse(stack *ipstack.IPStack){
+func SendRIPResponse(stack *ipstack.IPStack, routes []ipstack.Route){
     for _, RIPNeighbor := range stack.RipNeighbors {
         iroute, _, _ := stack.ForwardingTable.MatchPrefix(RIPNeighbor)
         var srcIP = iroute.VirtualIP
@@ -100,9 +100,8 @@ func SendRIPResponse(stack *ipstack.IPStack){
             Entries:    []RIPEntry{},
         }
 
-        // Add entries to the response message
-        stack.ForwardingTable.Mu.Lock()
-        for _, route := range stack.ForwardingTable.Routes {
+
+        for _, route := range routes {
             if route.RoutingMode == ipstack.RoutingTypeRIP {
                 ipv4Addr := route.Prefix.Addr().As4()
                 ipv4Mask := route.Prefix.Masked().Addr().As4()
@@ -120,7 +119,6 @@ func SendRIPResponse(stack *ipstack.IPStack){
                 ripResponse.Entries = append(ripResponse.Entries, entry)
             }
         }
-        stack.ForwardingTable.Mu.Unlock()
         ripResponse.NumEntries = uint16(len(ripResponse.Entries))
         
         messageBytes := SerializeRIPMessage(&ripResponse)
@@ -150,19 +148,21 @@ func CheckRouteTimeouts(stack *ipstack.IPStack) {
     stack.ForwardingTable.Mu.Lock()
     defer stack.ForwardingTable.Mu.Unlock()
     validRoutes := []ipstack.Route{}
+    modifiedRoutes:= []ipstack.Route{}
     for _, route := range stack.ForwardingTable.Routes {
         if now.Sub(route.UpdateTime) > 12 * time.Second {
             fmt.Println("Route timeout: ", route.Prefix)
             // Route has expired, set cost to infinity and remove after triggering update
             route.Cost = 16 // Set to infinity
-            SendRIPResponse(stack)
+            
+            modifiedRoutes = append(modifiedRoutes, route)
             continue
         }
         validRoutes = append(validRoutes, route)
     }
+    SendRIPResponse(stack, modifiedRoutes)
     stack.ForwardingTable.Routes = validRoutes  
 }
-
 
 //a response to a RIP request, a triggered update, or a periodic update
 func RipPacketHandler(packet *ipstack.Packet, args []interface{}){
@@ -171,7 +171,12 @@ func RipPacketHandler(packet *ipstack.Packet, args []interface{}){
 
     if msg.Command == 1 { // or gets a triggered update, or a periodic update??
         // Send a response to the request
-        SendRIPResponse(stack)
+        stack.ForwardingTable.Mu.Lock()
+        var ftable_copy = make([]ipstack.Route, len(stack.ForwardingTable.Routes))
+        copy(ftable_copy, stack.ForwardingTable.Routes)
+        stack.ForwardingTable.Mu.Unlock()
+
+        SendRIPResponse(stack, ftable_copy)
         go SendPeriodicRIP(stack)
     } else {
         // Update the forwarding table
@@ -182,13 +187,16 @@ func RipPacketHandler(packet *ipstack.Packet, args []interface{}){
 func SendPeriodicRIP(stack *ipstack.IPStack){
     for {
         time.Sleep(5 * time.Second)
-        SendRIPResponse(stack)
+        stack.ForwardingTable.Mu.Lock()
+        var ftable_copy = make([]ipstack.Route, len(stack.ForwardingTable.Routes))
+        copy(ftable_copy, stack.ForwardingTable.Routes)
+        stack.ForwardingTable.Mu.Unlock()
+        SendRIPResponse(stack, ftable_copy)
     }
 }
 
 func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
     stack.ForwardingTable.Mu.Lock()
-    
     msg := DeserializeRIPMessage(packet.Body)
     srcAddr := packet.Header.Src //D from Neighbor
     
