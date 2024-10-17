@@ -147,6 +147,8 @@ func SendRIPResponse(stack *ipstack.IPStack){
 
 func CheckRouteTimeouts(stack *ipstack.IPStack) {
     now := time.Now()
+    stack.ForwardingTable.Mu.Lock()
+    defer stack.ForwardingTable.Mu.Unlock()
     validRoutes := []ipstack.Route{}
     for _, route := range stack.ForwardingTable.Routes {
         if now.Sub(route.UpdateTime) > 12 * time.Second {
@@ -186,7 +188,7 @@ func SendPeriodicRIP(stack *ipstack.IPStack){
 
 func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
     stack.ForwardingTable.Mu.Lock()
-    defer stack.ForwardingTable.Mu.Unlock()
+    
     msg := DeserializeRIPMessage(packet.Body)
     srcAddr := packet.Header.Src //D from Neighbor
     
@@ -198,6 +200,7 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
             break
         }
     }
+    stack.ForwardingTable.Mu.Unlock()
 
     //updatedEntries := []RIPEntry{} // keep track of updated entries
 
@@ -254,7 +257,9 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
                 UpdateTime: time.Now(),
                 RoutingMode: ipstack.RoutingTypeRIP,
             }
+            stack.ForwardingTable.Mu.Lock()
             stack.ForwardingTable.Routes = append(stack.ForwardingTable.Routes, newRoute)
+            stack.ForwardingTable.Mu.Unlock()
         }
     }
 }
