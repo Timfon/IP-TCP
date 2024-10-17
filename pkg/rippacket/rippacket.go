@@ -56,7 +56,8 @@ func DeserializeRIPMessage(buffer []byte) *RIPMessage {
 
 func SendRIPRequest(stack *ipstack.IPStack) {
     for _, RIPNeighbor := range stack.RipNeighbors {
-        iroute, _, _ := ipstack.MatchPrefix(&stack.ForwardingTable, RIPNeighbor)
+        table := stack.ForwardingTable
+        iroute, _, _ := table.MatchPrefix(RIPNeighbor)
         var srcIP = iroute.VirtualIP
 
         // Create a RIP request message
@@ -89,7 +90,7 @@ func SendRIPRequest(stack *ipstack.IPStack) {
 
 func SendRIPResponse(stack *ipstack.IPStack){
     for _, RIPNeighbor := range stack.RipNeighbors {
-        iroute, _, _ := ipstack.MatchPrefix(&stack.ForwardingTable, RIPNeighbor)
+        iroute, _, _ := stack.ForwardingTable.MatchPrefix(RIPNeighbor)
         var srcIP = iroute.VirtualIP
 
         // Create a RIP response message
@@ -100,6 +101,7 @@ func SendRIPResponse(stack *ipstack.IPStack){
         }
 
         // Add entries to the response message
+        stack.ForwardingTable.Mu.Lock()
         for _, route := range stack.ForwardingTable.Routes {
             if route.RoutingMode == ipstack.RoutingTypeRIP {
                 ipv4Addr := route.Prefix.Addr().As4()
@@ -118,6 +120,7 @@ func SendRIPResponse(stack *ipstack.IPStack){
                 ripResponse.Entries = append(ripResponse.Entries, entry)
             }
         }
+        stack.ForwardingTable.Mu.Unlock()
         ripResponse.NumEntries = uint16(len(ripResponse.Entries))
         
         messageBytes := SerializeRIPMessage(&ripResponse)
@@ -167,6 +170,7 @@ func RipPacketHandler(packet *ipstack.Packet, args []interface{}){
     if msg.Command == 1 { // or gets a triggered update, or a periodic update??
         // Send a response to the request
         SendRIPResponse(stack)
+        go SendPeriodicRIP(stack)
     } else {
         // Update the forwarding table
         UpdateForwardingTable(packet, stack)
@@ -181,6 +185,8 @@ func SendPeriodicRIP(stack *ipstack.IPStack){
 }
 
 func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
+    stack.ForwardingTable.Mu.Lock()
+    defer stack.ForwardingTable.Mu.Unlock()
     msg := DeserializeRIPMessage(packet.Body)
     srcAddr := packet.Header.Src //D from Neighbor
     
@@ -209,7 +215,7 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
         _, maskBits := mask.Size()
         prefix := netip.PrefixFrom(netipAddr, maskBits)//used later if we need to add a new route?
 
-        route, found, err := ipstack.MatchPrefix(&stack.ForwardingTable, netipAddr)
+        route, found, err := stack.ForwardingTable.MatchPrefix(netipAddr)
         if err != nil {
             fmt.Println("Error matching prefix: ", err)
             continue

@@ -46,13 +46,38 @@ type Interface struct {
 //forwarding table is a slice/slice of routes
 type ForwardingTable struct {
 	Routes []Route
+	Mu sync.Mutex
 }
 
-var mu sync.Mutex
-func AddToForwardingTable(table *ForwardingTable, route Route) {
-	mu.Lock()
-	defer mu.Unlock()
+
+func (table *ForwardingTable) AddToForwardingTable(route Route) {
+	table.Mu.Lock()
+	defer table.Mu.Unlock()
 	table.Routes = append(table.Routes, route)
+}
+
+func (table *ForwardingTable) MatchPrefix(addr netip.Addr) (Route, bool, error) {
+	table.Mu.Lock()
+	defer table.Mu.Unlock()
+	var longestRoute Route
+	var longestPrefixLength = -1
+	found := false
+	
+	for _, route := range table.Routes {
+		if route.Prefix.Contains(addr) {
+			prefixLength := route.Prefix.Bits() 
+			if prefixLength > longestPrefixLength {
+				longestRoute = route
+				longestPrefixLength = prefixLength
+				found = true
+			}
+		}
+	}
+
+	if !found {
+		return Route{}, false, nil
+	}
+	return longestRoute, true, nil
 }
 
 type IPStack struct {
@@ -172,7 +197,7 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 	// Turn the address string into a UDPAddr for the connection
 	dst:= header.Dst
 	table:= stack.ForwardingTable
-	route, found, _ := MatchPrefix(&table, dst)
+	route, found, _ := table.MatchPrefix(dst)
 	if !found {
 		fmt.Println("No matching prefix found")
 		return nil
@@ -189,7 +214,7 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 			}
 		}
 	  } else {
-		iroute, _, _ := MatchPrefix(&table, route.VirtualIP)
+		iroute, _, _ := table.MatchPrefix(route.VirtualIP)
 		conn = iroute.Iface.UdpSocket
 		for _, n := range stack.Neighbors {
 			if n.DestAddr == route.VirtualIP {
@@ -307,27 +332,4 @@ func ComputeChecksum(b []byte) uint16 {
 	// See ValidateChecksum in the receiver file for details.
 	checksumInv := checksum ^ 0xffff
 	return checksumInv
-}
-
-
-func MatchPrefix(table *ForwardingTable, addr netip.Addr) (Route, bool, error) {
-	var longestRoute Route
-	var longestPrefixLength = -1
-	found := false
-	
-	for _, route := range table.Routes {
-		if route.Prefix.Contains(addr) {
-			prefixLength := route.Prefix.Bits() 
-			if prefixLength > longestPrefixLength {
-				longestRoute = route
-				longestPrefixLength = prefixLength
-				found = true
-			}
-		}
-	}
-
-	if !found {
-		return Route{}, false, nil
-	}
-	return longestRoute, true, nil
 }

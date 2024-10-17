@@ -22,6 +22,7 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
       if input == "li" {
         w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
           fmt.Fprintln(w, "Name\tAddr/Prefix\tState")
+          stack.ForwardingTable.Mu.Lock()    
           for _, route := range stack.ForwardingTable.Routes {
                 var ud = "down"
                 var iface = route.Iface
@@ -30,8 +31,10 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
                         ud = "up"
                     }
                 fmt.Fprintln(w, iface.Name + "\t" + route.Prefix.String() + "\t" + ud) 
-              }// change UP later to have the actual state of interface
+             
+                }// change UP later to have the actual state of interface
           }
+          stack.ForwardingTable.Mu.Unlock()
           w.Flush()
       } else if input == "ln" {
         w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
@@ -55,7 +58,7 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
           messageBytes := []byte(parts[2])
 
         table := stack.ForwardingTable
-          route, found, _ := ipstack.MatchPrefix(&table, destAddr)
+        route, found, _ := table.MatchPrefix(destAddr)
           if !found {
               fmt.Println("No matching prefix found")
               continue
@@ -65,7 +68,7 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
           if route.RoutingMode == 4{
             srcIP = route.VirtualIP
           } else {
-            iroute, _, _ := ipstack.MatchPrefix(&table, route.VirtualIP)
+            iroute, _, _ := table.MatchPrefix(route.VirtualIP)
             srcIP = iroute.VirtualIP
           }
 
@@ -89,6 +92,8 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
       } else if input == "lr" {
         w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
         fmt.Fprintln(w, "T\tPrefix\tNext Hop\tCost")
+        stack.ForwardingTable.Mu.Lock()
+        
         for _, route := range stack.ForwardingTable.Routes {
             switch route.RoutingMode {
             case 1:
@@ -100,6 +105,7 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
             }
             //change cost later
         }
+        stack.ForwardingTable.Mu.Unlock()
         w.Flush()
       }
      
