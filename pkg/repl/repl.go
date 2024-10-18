@@ -62,7 +62,7 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
 
         table := stack.ForwardingTable
         route, found, _ := table.MatchPrefix(destAddr)
-          if !found {
+          if found != -1 {
               fmt.Println("No matching prefix found")
               continue
           }
@@ -100,7 +100,7 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
         for _, route := range stack.ForwardingTable.Routes {
             switch route.RoutingMode {
             case 1:
-                fmt.Fprintln(w, "S\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + fmt.Sprint(route.Cost))
+                fmt.Fprintln(w, "S\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + fmt.Sprint("-"))
             case 2:
                 fmt.Fprintln(w, "R\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + fmt.Sprint(route.Cost))
             case 3:

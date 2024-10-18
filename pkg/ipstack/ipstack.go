@@ -56,28 +56,25 @@ func (table *ForwardingTable) AddToForwardingTable(route Route) {
 	table.Routes = append(table.Routes, route)
 }
 
-func (table *ForwardingTable) MatchPrefix(addr netip.Addr) (Route, bool, error) {
+func (table *ForwardingTable) MatchPrefix(addr netip.Addr) (Route, int, error) {
 	table.Mu.Lock()
 	defer table.Mu.Unlock()
 	var longestRoute Route
 	var longestPrefixLength = -1
-	found := false
+	found := -1
 	
-	for _, route := range table.Routes {
+	for i, route := range table.Routes {
 		if route.Prefix.Contains(addr) {
 			prefixLength := route.Prefix.Bits() 
 			if prefixLength > longestPrefixLength {
 				longestRoute = route
 				longestPrefixLength = prefixLength
-				found = true
+				found = i
 			}
 		}
 	}
 
-	if !found {
-		return Route{}, false, nil
-	}
-	return longestRoute, true, nil
+	return longestRoute, found, nil
 }
 
 type IPStack struct {
@@ -199,7 +196,7 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 	dst:= header.Dst
 	table:= stack.ForwardingTable
 	route, found, _ := table.MatchPrefix(dst)
-	if !found {
+	if found == -1 {
 		fmt.Println("No matching prefix found")
 		return nil
 	}

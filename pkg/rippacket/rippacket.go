@@ -217,7 +217,7 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
     if err != nil {
         fmt.Println("Error matching prefix: ", err)
     }
-    if !found {
+    if found == -1 {
         fmt.Println("No matching prefix found")
     }
 
@@ -246,8 +246,8 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
         }
 
         totalCost := entry.Cost + 1
-        
-        if found {
+        stack.ForwardingTable.Mu.Lock()
+        if found >= 0{
             c_old := route.Cost
             
             if totalCost < c_old {
@@ -256,19 +256,20 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
                 route.VirtualIP = srcAddr
                 route.UpdateTime = time.Now()
                 updatedRoutes = append(updatedRoutes, route)
+                stack.ForwardingTable.Routes[found] = route
             } else if totalCost == c_old && route.VirtualIP == srcAddr {
                 // Refresh existing route
                 route.UpdateTime = time.Now()
+                stack.ForwardingTable.Routes[found] = route
             } else if totalCost > c_old && route.VirtualIP == srcAddr {
                 route.Cost = totalCost
                 route.UpdateTime = time.Now()
                 updatedRoutes = append(updatedRoutes, route)
+                stack.ForwardingTable.Routes[found] = route
             }
 
 			//fmt.Println(route.Prefix, dstAddr, route.VirtualIP)
         } else {
-            // Create new route
-
 			fmt.Println(receiving_route.Prefix, srcAddr, receiving_route.VirtualIP)
             newRoute := ipstack.Route{
                 Iface:       receiving_route.Iface,
@@ -278,11 +279,13 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
                 UpdateTime:  time.Now(),
                 RoutingMode: ipstack.RoutingTypeRIP,
             }
-            stack.ForwardingTable.Mu.Lock()
+
             stack.ForwardingTable.Routes = append(stack.ForwardingTable.Routes, newRoute)
-            stack.ForwardingTable.Mu.Unlock()
-            updatedRoutes = append(updatedRoutes, newRoute)
+
+
         }
+        stack.ForwardingTable.Mu.Unlock()
+    
     }
 
     if len(updatedRoutes) > 0 {
