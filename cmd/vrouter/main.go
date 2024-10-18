@@ -42,7 +42,7 @@ func main() {
 
   go rippacket.SendRIPRequest(stack);
 
-  //go rippacket.SendPeriodicRIP(stack);
+  go rippacket.SendPeriodicRIP(stack);
 
   
 
