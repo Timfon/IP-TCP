@@ -270,7 +270,7 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
 
 			//fmt.Println(route.Prefix, dstAddr, route.VirtualIP)
         } else {
-			fmt.Println(receiving_route.Prefix, srcAddr, receiving_route.VirtualIP)
+			//fmt.Println(receiving_route.Prefix, srcAddr, receiving_route.VirtualIP)
             newRoute := ipstack.Route{
                 Iface:       receiving_route.Iface,
                 Prefix:      prefix,
