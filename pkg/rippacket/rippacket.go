@@ -210,88 +210,84 @@ func SendPeriodicRIP(stack *ipstack.IPStack) {
 }
 
 func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
-	stack.ForwardingTable.Mu.Lock()
-	msg := DeserializeRIPMessage(packet.Body)
-	srcAddr := packet.Header.Src //D from Neighbor
+    msg := DeserializeRIPMessage(packet.Body)
+    srcAddr := packet.Header.Src    // N from Neighbor
+    //dstAddr := packet.Header.Dst    // Receiver's IP address
+    receiving_route, found, err := stack.ForwardingTable.MatchPrefix(srcAddr)
 
-	//Kinda jank way of getting the interface of the src address?? Prob should comment out
-	iface := ipstack.Interface{}
-	for _, route := range stack.ForwardingTable.Routes {
-		if route.VirtualIP == srcAddr {
-			iface = *route.Iface
-			break
-		}
-	}
-	stack.ForwardingTable.Mu.Unlock()
+    //fmt.Println(nexthopVIP, srcAddr, dstAddr)
+    if err != nil {
+        fmt.Println("Error matching prefix: ", err)
+    }
+    if !found {
+        fmt.Println("No matching prefix found")
+    }
 
-	//updatedEntries := []RIPEntry{} // keep track of updated entries
-
-	for _, entry := range msg.Entries {
-		// Convert Address and Mask to netip.Addr
-
-		addrBytes := make([]byte, 4)
+    updatedRoutes := []ipstack.Route{}
+    for _, entry := range msg.Entries {
+        addrBytes := make([]byte, 4)
         binary.BigEndian.PutUint32(addrBytes, entry.Address)
-        
-        // Convert uint32 Mask back to IP mask bytes
         maskBytes := make([]byte, 4)
         binary.BigEndian.PutUint32(maskBytes, entry.Mask)
-        
-        // Count the number of bits in the mask
         maskBits := 0
         for _, b := range maskBytes {
             maskBits += bits.OnesCount8(b)
         }
-
-        // Convert to netip.Addr
+        
         netipAddr, ok := netip.AddrFromSlice(addrBytes)
         if !ok {
-            fmt.Println("Error converting to netip.Addr: octopus:")
+            fmt.Println("Error converting to netip.Addr")
             continue
         }
+		prefix := netip.PrefixFrom(netipAddr, maskBits)
 
-        prefix := netip.PrefixFrom(netipAddr, maskBits)
         route, found, err := stack.ForwardingTable.MatchPrefix(netipAddr)
         if err != nil {
             fmt.Println("Error matching prefix: ", err)
             continue
         }
 
-		totalCost := entry.Cost + 1 // Add 1 to the cost to account for the link to the neighbor?
-
-		if found {
-			// Existing route
-			c_old := route.Cost
-			// Compare costs and update accordingly
-			if totalCost < c_old {
-				// Better route, update table
-				route.Cost = totalCost
-				route.VirtualIP = srcAddr // N = source address of the packet
-				route.UpdateTime = time.Now()
-			} else if totalCost > c_old {
-				if route.VirtualIP == srcAddr {
-					// Topology has changed, higher cost from same neighbor
-					route.Cost = totalCost
-					route.UpdateTime = time.Now()
-				}
-				// Else: we ignore the update because the current route is better
-			} else if totalCost == c_old && route.VirtualIP == srcAddr {
-				//refresh the timeout
-				route.UpdateTime = time.Now()
-			}
-		} else {
-			// New route, add to forwarding table
+        totalCost := entry.Cost + 1
+        
+        if found {
+            c_old := route.Cost
             
-			newRoute := ipstack.Route{
-				Iface:       &iface,
-				Prefix:      prefix,
-				Cost:        totalCost,
-				VirtualIP:   srcAddr, //Destination address
-				UpdateTime:  time.Now(),
-				RoutingMode: ipstack.RoutingTypeRIP,
-			}
-			stack.ForwardingTable.Mu.Lock()
-			stack.ForwardingTable.Routes = append(stack.ForwardingTable.Routes, newRoute)
-			stack.ForwardingTable.Mu.Unlock()
-		}
-	}
+            if totalCost < c_old {
+                // Better route found
+                route.Cost = totalCost
+                route.VirtualIP = srcAddr
+                route.UpdateTime = time.Now()
+                updatedRoutes = append(updatedRoutes, route)
+            } else if totalCost == c_old && route.VirtualIP == srcAddr {
+                // Refresh existing route
+                route.UpdateTime = time.Now()
+            } else if totalCost > c_old && route.VirtualIP == srcAddr {
+                route.Cost = totalCost
+                route.UpdateTime = time.Now()
+                updatedRoutes = append(updatedRoutes, route)
+            }
+
+			//fmt.Println(route.Prefix, dstAddr, route.VirtualIP)
+        } else {
+            // Create new route
+
+			fmt.Println(receiving_route.Prefix, srcAddr, receiving_route.VirtualIP)
+            newRoute := ipstack.Route{
+                Iface:       receiving_route.Iface,
+                Prefix:      prefix,
+                Cost:        entry.Cost + 1,
+                VirtualIP:   srcAddr, //route.virtualIP
+                UpdateTime:  time.Now(),
+                RoutingMode: ipstack.RoutingTypeRIP,
+            }
+            stack.ForwardingTable.Mu.Lock()
+            stack.ForwardingTable.Routes = append(stack.ForwardingTable.Routes, newRoute)
+            stack.ForwardingTable.Mu.Unlock()
+            updatedRoutes = append(updatedRoutes, newRoute)
+        }
+    }
+
+    if len(updatedRoutes) > 0 {
+        SendRIPResponse(stack, updatedRoutes)
+    }
 }
