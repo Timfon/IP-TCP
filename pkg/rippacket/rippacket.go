@@ -150,13 +150,15 @@ func CheckRouteTimeouts(stack *ipstack.IPStack) {
     validRoutes := []ipstack.Route{}
     modifiedRoutes:= []ipstack.Route{}
     for _, route := range stack.ForwardingTable.Routes {
-        if now.Sub(route.UpdateTime) > 12 * time.Second {
-            fmt.Println("Route timeout: ", route.Prefix)
-            // Route has expired, set cost to infinity and remove after triggering update
-            route.Cost = 16 // Set to infinity
-            
-            modifiedRoutes = append(modifiedRoutes, route)
-            continue
+        if route.RoutingMode == 2{
+            if now.Sub(route.UpdateTime) > 12 * time.Second {
+                fmt.Println("Route timeout: ", route.Prefix)
+                // Route has expired, set cost to infinity and remove after triggering update
+                route.Cost = 16 // Set to infinity
+                
+                modifiedRoutes = append(modifiedRoutes, route)
+                continue
+            }
         }
         validRoutes = append(validRoutes, route)
     }

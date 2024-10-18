@@ -39,6 +39,7 @@ func main() {
   }
 
   rippacket.SendRIPRequest(stack);
+  go rippacket.CheckRouteTimeouts(stack);
 
 
   //extra thread for sending periodic rip commands
