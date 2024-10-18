@@ -1,17 +1,17 @@
 package ipstack
 
 import (
-  "net/netip"
-  "net"
-  "time"
-  "IP/pkg/lnxconfig"
-  "IP/pkg/ipv4header"
-  "github.com/google/netstack/tcpip/header"
-  "fmt"
-  "log"
-  "sync"
-)
+	"IP/pkg/ipv4header"
+	"IP/pkg/lnxconfig"
+	"fmt"
+	"log"
+	"net"
+	"net/netip"
+	"sync"
+	"time"
 
+	"github.com/google/netstack/tcpip/header"
+)
 
 type RoutingMode int
 
@@ -22,33 +22,30 @@ const (
 	RoutingTypeLocal  RoutingMode = 3
 )
 
-
-
 const (
 	MAX_MESSAGE_SIZE = 1400
 )
 
 type Route struct {
-	Iface *Interface
+	Iface       *Interface
 	RoutingMode RoutingMode
-	Prefix netip.Prefix
-	VirtualIP netip.Addr
-	UpdateTime time.Time
-	Cost uint32
+	Prefix      netip.Prefix
+	VirtualIP   netip.Addr
+	UpdateTime  time.Time
+	Cost        uint32
 }
 
 type Interface struct {
-	Name string
+	Name      string
 	UdpSocket *net.UDPConn
-	UpOrDown bool
-  }
-
-//forwarding table is a slice/slice of routes
-type ForwardingTable struct {
-	Routes []Route
-	Mu sync.Mutex
+	UpOrDown  bool
 }
 
+// forwarding table is a slice/slice of routes
+type ForwardingTable struct {
+	Routes []Route
+	Mu     sync.Mutex
+}
 
 func (table *ForwardingTable) AddToForwardingTable(route Route) {
 	table.Mu.Lock()
@@ -62,10 +59,10 @@ func (table *ForwardingTable) MatchPrefix(addr netip.Addr) (Route, int, error) {
 	var longestRoute Route
 	var longestPrefixLength = -1
 	found := -1
-	
+
 	for i, route := range table.Routes {
 		if route.Prefix.Contains(addr) {
-			prefixLength := route.Prefix.Bits() 
+			prefixLength := route.Prefix.Bits()
 			if prefixLength > longestPrefixLength {
 				longestRoute = route
 				longestPrefixLength = prefixLength
@@ -78,9 +75,9 @@ func (table *ForwardingTable) MatchPrefix(addr netip.Addr) (Route, int, error) {
 }
 
 type IPStack struct {
-	Handlers map[uint8]HandlerFunc
- 	Interfaces map[string]*Interface
-	Neighbors  []lnxconfig.NeighborConfig
+	Handlers    map[uint8]HandlerFunc
+	Interfaces  map[string]*Interface
+	Neighbors   []lnxconfig.NeighborConfig
 	RoutingMode lnxconfig.RoutingMode
 
 	// ROUTERS ONLY:  Neighbors to send RIP packets
@@ -96,15 +93,15 @@ type IPStack struct {
 	RipTimeoutThreshold   time.Duration
 
 	// HOSTS ONLY:  Timing parameters for TCP
-	TcpRtoMin time.Duration
-	TcpRtoMax time.Duration
+	TcpRtoMin       time.Duration
+	TcpRtoMax       time.Duration
 	ForwardingTable ForwardingTable
 
 	Default_Addr netip.Prefix
 }
 
-func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
-	
+func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error) {
+
 	var ifaces map[string]*Interface
 	ifaces = make(map[string]*Interface)
 	var routes []Route
@@ -119,17 +116,17 @@ func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
 		}
 
 		iface := Interface{
-			Name: interfaceConfig.Name,
+			Name:      interfaceConfig.Name,
 			UdpSocket: conn,
-			UpOrDown: true,
+			UpOrDown:  true,
 		}
 
 		route := Route{
-			Iface: &iface,
-			Prefix: interfaceConfig.AssignedPrefix,
+			Iface:       &iface,
+			Prefix:      interfaceConfig.AssignedPrefix,
 			RoutingMode: RoutingTypeLocal,
-			VirtualIP: interfaceConfig.AssignedIP,
-			Cost: 0,//change later
+			VirtualIP:   interfaceConfig.AssignedIP,
+			Cost:        0, //change later
 		}
 		routes = append(routes, route)
 		ifaces[iface.Name] = &iface
@@ -138,65 +135,66 @@ func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
 	for p, addr := range config.StaticRoutes {
 		route := Route{
 			RoutingMode: RoutingTypeStatic,
-			Prefix: p,
-			VirtualIP: addr,
-			Cost: 0, //higher cost for a static route??
+			Prefix:      p,
+			VirtualIP:   addr,
+			Cost:        0, //higher cost for a static route??
 		}
 		routes = append(routes, route)
 	}
-  
-  stack := &IPStack{
-	Handlers: make(map[uint8]HandlerFunc),
-	Interfaces: ifaces,
-    Neighbors: config.Neighbors,
-    RoutingMode: config.RoutingMode,
-    RipNeighbors: config.RipNeighbors,
-    StaticRoutes: config.StaticRoutes,
-    OriginatingPrefixes: config.OriginatingPrefixes,
-    RipPeriodicUpdateRate: config.RipPeriodicUpdateRate,
-    RipTimeoutThreshold: config.RipTimeoutThreshold,
-    TcpRtoMin: config.TcpRtoMin,
-    TcpRtoMax: config.TcpRtoMax,
-	
-	ForwardingTable: ForwardingTable{
-		Routes: routes,
-	},
+
+	stack := &IPStack{
+		Handlers:              make(map[uint8]HandlerFunc),
+		Interfaces:            ifaces,
+		Neighbors:             config.Neighbors,
+		RoutingMode:           config.RoutingMode,
+		RipNeighbors:          config.RipNeighbors,
+		StaticRoutes:          config.StaticRoutes,
+		OriginatingPrefixes:   config.OriginatingPrefixes,
+		RipPeriodicUpdateRate: config.RipPeriodicUpdateRate,
+		RipTimeoutThreshold:   config.RipTimeoutThreshold,
+		TcpRtoMin:             config.TcpRtoMin,
+		TcpRtoMax:             config.TcpRtoMax,
+
+		ForwardingTable: ForwardingTable{
+			Routes: routes,
+		},
+	}
+
+	//send over
+	/*
+	   for _, rn := range config.RipNeighbors {
+
+	   }*/
+	return stack, nil
 }
 
-//send over
-/*
-for _, rn := range config.RipNeighbors {
-
-}*/
-return stack, nil
-}
-
-//sending/receiving packets logic:
+// sending/receiving packets logic:
 type Packet struct {
 	Header ipv4header.IPv4Header
-	Body []byte
+	Body   []byte
 }
 
-type HandlerFunc = func (*Packet, []interface{})
-	func (stack *IPStack) RegisterRecvHandler (protocolNum uint8, callbackFunc HandlerFunc) {
-		stack.Handlers[protocolNum] = callbackFunc
+type HandlerFunc = func(*Packet, []interface{})
+
+func (stack *IPStack) RegisterRecvHandler(protocolNum uint8, callbackFunc HandlerFunc) {
+	stack.Handlers[protocolNum] = callbackFunc
 }
 
 func TestPacketHandler(packet *Packet, args []interface{}) {
 	srcIP := packet.Header.Src
 	dstIP := packet.Header.Dst
 	ttl := packet.Header.TTL
-	data := string(packet.Body) 
+	data := string(packet.Body)
 	fmt.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n", srcIP, dstIP, ttl, data)
 	fmt.Print("> ")
 }
 
-//pass interface by reference?
-func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) { 
-	// Do we do the UDP stuff here or somewhere else?? 
+// pass interface by reference?
+func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) error {
+	// Do we do the UDP stuff here or somewhere else??
 	// Turn the address string into a UDPAddr for the connection
-	dst:= header.Dst
-	table:= stack.ForwardingTable
+	dst := header.Dst
+	table := stack.ForwardingTable
 	route, found, _ := table.MatchPrefix(dst)
 	if found == -1 {
 		fmt.Println("No matching prefix found")
@@ -208,7 +206,7 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 
 	if route.RoutingMode == RoutingTypeLocal {
 		conn = route.Iface.UdpSocket
-		if !route.Iface.UpOrDown{
+		if !route.Iface.UpOrDown {
 			if header.Protocol == 0 {
 				fmt.Println("Sent 0 bytes")
 			}
@@ -216,8 +214,8 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 		}
 		if route.VirtualIP == dst {
 			//print bytes sents
-			fmt.Println("Sent", len(data) + 20, "bytes")
-			if(header.TTL == 32){
+			fmt.Println("Sent", len(data)+20, "bytes")
+			if header.TTL == 32 {
 				header.TTL = header.TTL - 1
 			}
 			TestPacketHandler(&Packet{Header: *header, Body: data}, []interface{}{stack})
@@ -228,10 +226,10 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 				nextHop = n.UDPAddr
 			}
 		}
-	  } else {
+	} else {
 		iroute, _, _ := table.MatchPrefix(route.VirtualIP)
 		conn = iroute.Iface.UdpSocket
-		if !iroute.Iface.UpOrDown{
+		if !iroute.Iface.UpOrDown {
 			return nil
 		}
 		for _, n := range stack.Neighbors {
@@ -241,8 +239,8 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 		}
 	}
 
-	if !nextHop.IsValid(){
-		fmt.Println("No valid next hop port found")
+	if !nextHop.IsValid() {
+		fmt.Println("No valid neighbor found for VIP:" + dst.String() + ", dropping packet")
 		return nil
 	}
 
@@ -260,22 +258,22 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 	bytesToSend := make([]byte, 0, len(headerBytes)+len(data))
 	bytesToSend = append(bytesToSend, headerBytes...)
 	bytesToSend = append(bytesToSend, data...)
-	
-	bytesWritten, err := conn.WriteToUDP(bytesToSend,  net.UDPAddrFromAddrPort(nextHop))
+
+	bytesWritten, err := conn.WriteToUDP(bytesToSend, net.UDPAddrFromAddrPort(nextHop))
 
 	if err != nil {
 		log.Panicln("Error writing to socket: ", err)
 	}
 
-	if header.Protocol == 0 && header.TTL == 32{
+	if header.Protocol == 0 && header.TTL == 32 {
 		fmt.Printf("Sent %d bytes\n", bytesWritten)
 	}
 	return nil
 }
 
-//maybe pass interface by reference
+// maybe pass interface by reference
 func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
-    conn := route.Iface.UdpSocket
+	conn := route.Iface.UdpSocket
 	addr := route.VirtualIP
 
 	for {
@@ -285,8 +283,7 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 			log.Panicln("Error reading from UDP socket ", err)
 		}
 
-
-		if !route.Iface.UpOrDown{
+		if !route.Iface.UpOrDown {
 			continue
 		}
 
@@ -295,7 +292,7 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 		// (You'll need to do this part yourself)
 		hdr, err := ipv4header.ParseHeader(buffer)
 		hdr.TTL = hdr.TTL - 1
-		
+
 		if err != nil {
 			// What should you if the message fails to parse?
 			// Your node should not crash or exit when you get a bad message.
@@ -304,7 +301,7 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 			continue
 		}
 		headerSize := hdr.Len
-		
+
 		// Validate the checksum
 		// The checksum is correct if the value we computed matches
 		// the value stored in the header.
@@ -313,11 +310,11 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 		checksumFromHeader := uint16(hdr.Checksum)
 
 		message := buffer[headerSize:n]
-		packet := &Packet {
+		packet := &Packet{
 			Header: *hdr,
-			Body: message,
+			Body:   message,
 		}
-		
+
 		hdr.Checksum = 0
 		computedChecksum := ValidateChecksum(headerBytes, checksumFromHeader)
 		if computedChecksum != checksumFromHeader {
@@ -334,12 +331,12 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 				continue
 			}
 			if handler, exists := stack.Handlers[uint8(hdr.Protocol)]; exists {
-				//for tcp, may need to change this code to pass in different parameters for rip, tcp, and test, although test doesn't need any parameters other than the packet. 
+				//for tcp, may need to change this code to pass in different parameters for rip, tcp, and test, although test doesn't need any parameters other than the packet.
 				handler(packet, []interface{}{stack})
 			} else {
 				fmt.Printf("No handler for protocol %d\n", hdr.Protocol)
 			}
-		} else {	
+		} else {
 			SendIP(stack, hdr, message)
 		}
 	}
