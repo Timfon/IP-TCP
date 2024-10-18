@@ -31,7 +31,9 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
                     if iface.UpOrDown {
                         ud = "up"
                     }
-                fmt.Fprintln(w, iface.Name + "\t" + route.Prefix.String() + "\t" + ud) 
+                
+                  p := netip.PrefixFrom(route.VirtualIP, route.Prefix.Bits())
+                  fmt.Fprintln(w, iface.Name + "\t" + p.String() + "\t" + ud) 
              
                 }// change UP later to have the actual state of interface
           }

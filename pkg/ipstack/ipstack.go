@@ -209,11 +209,17 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 	if route.RoutingMode == RoutingTypeLocal {
 		conn = route.Iface.UdpSocket
 		if !route.Iface.UpOrDown{
+			if header.Protocol == 0 {
+				fmt.Println("Sent 0 bytes")
+			}
 			return nil
 		}
 		if route.VirtualIP == dst {
 			//print bytes sents
-			fmt.Println("Sent", len(data), "bytes")
+			fmt.Println("Sent", len(data) + 20, "bytes")
+			if(header.TTL == 32){
+				header.TTL = header.TTL - 1
+			}
 			TestPacketHandler(&Packet{Header: *header, Body: data}, []interface{}{stack})
 			return nil
 		}
@@ -261,7 +267,7 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 		log.Panicln("Error writing to socket: ", err)
 	}
 
-	if header.Protocol == 0 {
+	if header.Protocol == 0 && header.TTL == 32{
 		fmt.Printf("Sent %d bytes\n", bytesWritten)
 	}
 	return nil
