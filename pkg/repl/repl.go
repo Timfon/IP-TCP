@@ -1,11 +1,13 @@
 package repl
 import (
   "fmt"
+  "text/tabwriter"
   "os"
   "bufio"
   "strings"
   "IP/pkg/ipstack"
   "net/netip"
+  "IP/pkg/ipv4header"
 )
 
 func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
@@ -16,16 +18,36 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
           break
       }
       input := reader.Text()
+      
       if input == "li" {
-          fmt.Println("Name Addr/Prefix State")
-          for _, iface := range stack.Interfaces {
-              fmt.Println(iface.Name + " " + iface.AssignedPrefix.String() + " " + "UP") // change UP later to have the actual state of interface
+        w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
+          fmt.Fprintln(w, "Name\tAddr/Prefix\tState")
+          stack.ForwardingTable.Mu.Lock()    
+          for _, route := range stack.ForwardingTable.Routes {
+                var ud = "down"
+                
+                if route.RoutingMode == 3 {
+                  var iface = route.Iface
+                    if iface.UpOrDown {
+                        ud = "up"
+                    }
+                
+                  p := netip.PrefixFrom(route.VirtualIP, route.Prefix.Bits())
+                  fmt.Fprintln(w, iface.Name + "\t" + p.String() + "\t" + ud) 
+             
+                }// change UP later to have the actual state of interface
           }
+          stack.ForwardingTable.Mu.Unlock()
+          w.Flush()
       } else if input == "ln" {
-          fmt.Println("Iface VIP UDPAddr")
+        w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
+          fmt.Fprintln(w, "Iface\tVIP\tUDPAddr")
           for _, neighbor := range stack.Neighbors {
-              fmt.Println(neighbor.InterfaceName + " " + neighbor.DestAddr.String() + " " + neighbor.UDPAddr.String())
+              if(stack.Interfaces[neighbor.InterfaceName].UpOrDown){
+                fmt.Fprintln(w, neighbor.InterfaceName + "\t" + neighbor.DestAddr.String() + "\t" + neighbor.UDPAddr.String())
+              }
           }
+          w.Flush()
       } else if strings.HasPrefix(input, "send") {
           parts := strings.SplitN(input, " ", 3)
           if len(parts) != 3 {
@@ -39,37 +61,89 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
               continue
           }
           messageBytes := []byte(parts[2])
-          if hostOrRouter == "host" {
-              ipstack.SendIP(stack.Interfaces[0], destAddr, &stack.ForwardingTable, 0, messageBytes)
-          } else if hostOrRouter == "router" {
-              route, found, err := ipstack.MatchPrefix(&stack.ForwardingTable, destAddr)
-              if err != nil {
-                  fmt.Printf("Error matching route: %v\n", err)
-                  continue
-              }
-              if !found {
-                  fmt.Println("No matching route found for destination")
-                  continue
-              }
-              var outgoingIface *ipstack.Interface
-              for i := range stack.Interfaces {
-                  if stack.Interfaces[i].AssignedIP == route.NextHop{
-                      outgoingIface = &stack.Interfaces[i]
-                      break
-                  }
-              }
-              if outgoingIface == nil {
-                  fmt.Printf("Could not find interface")
-                  continue
-              }
-              ipstack.SendIP(*outgoingIface, destAddr, &stack.ForwardingTable, 0, messageBytes)
+
+        
+        table := stack.ForwardingTable
+        route, found, _ := table.MatchPrefix(destAddr)
+          if found == -1 {
+              fmt.Println("No matching prefix found")
+              continue
           }
-      } else if input == "lr" {
-        fmt.Println("T   Prefix   Next Hop   Cost")
-        for _, route := range stack.ForwardingTable.Routes {
-            fmt.Println("S   " + route.Prefix.String() + "   " + route.NextHop.String() + "   " + "1") //change cost later
+
+          var srcIP netip.Addr
+          if route.RoutingMode == 4{
+            srcIP = route.VirtualIP
+          } else {
+            iroute, _, _ := table.MatchPrefix(route.VirtualIP)
+            srcIP = iroute.VirtualIP
+          }
+
+          hdr := ipv4header.IPv4Header{
+            Version:  4,
+            Len: 	20, // Header length is always 20 when no IP options
+            TOS:      0,
+            TotalLen: ipv4header.HeaderLen + len(messageBytes),
+            ID:       0,
+            Flags:    0,
+            FragOff:  0,
+            TTL:      32, // idk man
+            Protocol: 0,
+            Checksum: 0, // Should be 0 until checksum is computed
+            Src:      srcIP, // double check
+            Dst:      destAddr,
+            Options:  []byte{},
         }
+        ipstack.SendIP(stack, &hdr, messageBytes)
+
+      } else if input == "lr" {
+        w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
+        fmt.Fprintln(w, "T\tPrefix\tNext Hop\tCost")
+        stack.ForwardingTable.Mu.Lock()
+        
+        for _, route := range stack.ForwardingTable.Routes {
+            switch route.RoutingMode {
+            case 1:
+                fmt.Fprintln(w, "S\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + fmt.Sprint("-"))
+            case 2:
+                if route.Cost < 16 {
+                fmt.Fprintln(w, "R\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + fmt.Sprint(route.Cost))
+                }
+            case 3:
+                fmt.Fprintln(w, "L\t" + route.Prefix.String() + "\tLOCAL:" + route.Iface.Name + "\t" + fmt.Sprint(route.Cost))
+            }
+            //change cost later
+        }
+        stack.ForwardingTable.Mu.Unlock()
+        w.Flush()
+      } else if strings.HasPrefix(input, "up") {
+        parts := strings.SplitN(input, " ", 2)
+        if len(parts) != 2 {
+            fmt.Println("Usage: up <ifname>")
+            continue
+        }
+
+        ifname := parts[1]
+
+        if value, ok := stack.Interfaces[ifname]; ok {
+          value.UpOrDown = true
+          stack.Interfaces[ifname] = value
+        } 
+
+      } else if strings.HasPrefix(input, "down") {
+        parts := strings.SplitN(input, " ", 2)
+        if len(parts) != 2 {
+            fmt.Println("Usage: down <ifname>")
+            continue
+        }
+
+        ifname := parts[1]
+
+        if value, ok := stack.Interfaces[ifname]; ok {
+         value.UpOrDown = false
+         stack.Interfaces[ifname] = value
+      } 
       }
+     
   }
 }
 

@@ -8,6 +8,7 @@ import (
   // "net"
   "IP/pkg/ipstack"
   // "net/netip"
+  "IP/pkg/rippacket"
 )
 
 func main() {
@@ -25,11 +26,16 @@ func main() {
   if err != nil {
     panic(err)
   }
-  fmt.Println(stack)
+
+  stack.RegisterRecvHandler(0, ipstack.TestPacketHandler)
+  stack.RegisterRecvHandler(200, rippacket.RipPacketHandler)
+
   go repl.StartRepl(stack, "host")
 
-  for _, iface := range stack.Interfaces{
-    go ipstack.ReceiveIP(&iface.UDPAddr, &stack.ForwardingTable, iface, stack)
+  for _, route := range stack.ForwardingTable.Routes{
+    if route.RoutingMode == 3 {
+      go ipstack.ReceiveIP(route, stack)
+    }
   }
 
   select{}

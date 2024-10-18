@@ -1,16 +1,17 @@
 package ipstack
 
 import (
-  "net/netip"
-  "net"
-  "time"
-  "IP/pkg/lnxconfig"
-  "IP/pkg/ipv4header"
-  "github.com/google/netstack/tcpip/header"
-  "fmt"
-  "log"
-)
+	"IP/pkg/ipv4header"
+	"IP/pkg/lnxconfig"
+	"fmt"
+	"log"
+	"net"
+	"net/netip"
+	"sync"
+	"time"
 
+	"github.com/google/netstack/tcpip/header"
+)
 
 type RoutingMode int
 
@@ -18,37 +19,65 @@ const (
 	RoutingTypeNone   RoutingMode = 0
 	RoutingTypeStatic RoutingMode = 1
 	RoutingTypeRIP    RoutingMode = 2
+	RoutingTypeLocal  RoutingMode = 3
+)
+
+const (
+	MAX_MESSAGE_SIZE = 1400
 )
 
 type Route struct {
+	Iface       *Interface
 	RoutingMode RoutingMode
-	Prefix netip.Prefix
-	NextHop netip.Addr
-	NextHopUDP netip.AddrPort
-	Cost int
-}
-
-//forwarding table is a slice/slice of routes
-type ForwardingTable struct {
-	Routes []Route
-}
-
-func AddToForwardingTable(table *ForwardingTable, route Route) {
-	table.Routes = append(table.Routes, route)
+	Prefix      netip.Prefix
+	VirtualIP   netip.Addr
+	UpdateTime  time.Time
+	Cost        uint32
 }
 
 type Interface struct {
-  Name string
-  AssignedIP netip.Addr
-  AssignedPrefix netip.Prefix
-  UDPAddr netip.AddrPort
-  UpOrDown bool
+	Name      string
+	UdpSocket *net.UDPConn
+	UpOrDown  bool
+}
+
+// forwarding table is a slice/slice of routes
+type ForwardingTable struct {
+	Routes []Route
+	Mu     sync.Mutex
+}
+
+func (table *ForwardingTable) AddToForwardingTable(route Route) {
+	table.Mu.Lock()
+	defer table.Mu.Unlock()
+	table.Routes = append(table.Routes, route)
+}
+
+func (table *ForwardingTable) MatchPrefix(addr netip.Addr) (Route, int, error) {
+	table.Mu.Lock()
+	defer table.Mu.Unlock()
+	var longestRoute Route
+	var longestPrefixLength = -1
+	found := -1
+
+	for i, route := range table.Routes {
+		if route.Prefix.Contains(addr) {
+			prefixLength := route.Prefix.Bits()
+			if prefixLength > longestPrefixLength {
+				longestRoute = route
+				longestPrefixLength = prefixLength
+				found = i
+			}
+		}
+	}
+
+	return longestRoute, found, nil
 }
 
 type IPStack struct {
-	Handlers map[uint8]HandlerFunc
- 	Interfaces []Interface
-	Neighbors  []lnxconfig.NeighborConfig
+	Handlers    map[uint8]HandlerFunc
+	Interfaces  map[string]*Interface
+	Neighbors   []lnxconfig.NeighborConfig
 	RoutingMode lnxconfig.RoutingMode
 
 	// ROUTERS ONLY:  Neighbors to send RIP packets
@@ -64,176 +93,205 @@ type IPStack struct {
 	RipTimeoutThreshold   time.Duration
 
 	// HOSTS ONLY:  Timing parameters for TCP
-	TcpRtoMin time.Duration
-	TcpRtoMax time.Duration
+	TcpRtoMin       time.Duration
+	TcpRtoMax       time.Duration
 	ForwardingTable ForwardingTable
 
 	Default_Addr netip.Prefix
 }
 
-func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
-	
-	var ifaces []Interface
+func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error) {
+
+	var ifaces map[string]*Interface
+	ifaces = make(map[string]*Interface)
 	var routes []Route
 	for _, interfaceConfig := range config.Interfaces {
+
+		udpPort := interfaceConfig.UDPAddr
+
+		remoteAddr := net.UDPAddrFromAddrPort(udpPort)
+		conn, err := net.ListenUDP("udp4", remoteAddr)
+		if err != nil {
+			log.Panicln("Dial: ", err)
+		}
+
 		iface := Interface{
-			Name: interfaceConfig.Name,
-			AssignedIP: interfaceConfig.AssignedIP,
-			AssignedPrefix: interfaceConfig.AssignedPrefix,
-			UDPAddr: interfaceConfig.UDPAddr,
-			UpOrDown: true,
+			Name:      interfaceConfig.Name,
+			UdpSocket: conn,
+			UpOrDown:  true,
 		}
 
 		route := Route{
-			RoutingMode: RoutingTypeStatic,
-			Prefix: interfaceConfig.AssignedPrefix,
-			NextHop: interfaceConfig.AssignedIP,
-			NextHopUDP: interfaceConfig.UDPAddr,
-			Cost: -1,//change later
+			Iface:       &iface,
+			Prefix:      interfaceConfig.AssignedPrefix,
+			RoutingMode: RoutingTypeLocal,
+			VirtualIP:   interfaceConfig.AssignedIP,
+			Cost:        0, //change later
 		}
 		routes = append(routes, route)
-		ifaces = append(ifaces, iface)
+		ifaces[iface.Name] = &iface
 	}
-  stack := &IPStack{
-	  Handlers: make(map[uint8]HandlerFunc),
-	  Interfaces: ifaces,
-    Neighbors: config.Neighbors,
-    RoutingMode: config.RoutingMode,
-    RipNeighbors: config.RipNeighbors,
-    StaticRoutes: config.StaticRoutes,
-    OriginatingPrefixes: config.OriginatingPrefixes,
-    RipPeriodicUpdateRate: config.RipPeriodicUpdateRate,
-    RipTimeoutThreshold: config.RipTimeoutThreshold,
-    TcpRtoMin: config.TcpRtoMin,
-    TcpRtoMax: config.TcpRtoMax,
-	
-	ForwardingTable: ForwardingTable{
-		Routes: routes,
-	},
-}
-return stack, nil
+
+	for p, addr := range config.StaticRoutes {
+		route := Route{
+			RoutingMode: RoutingTypeStatic,
+			Prefix:      p,
+			VirtualIP:   addr,
+			Cost:        0, //higher cost for a static route??
+		}
+		routes = append(routes, route)
+	}
+
+	stack := &IPStack{
+		Handlers:              make(map[uint8]HandlerFunc),
+		Interfaces:            ifaces,
+		Neighbors:             config.Neighbors,
+		RoutingMode:           config.RoutingMode,
+		RipNeighbors:          config.RipNeighbors,
+		StaticRoutes:          config.StaticRoutes,
+		OriginatingPrefixes:   config.OriginatingPrefixes,
+		RipPeriodicUpdateRate: config.RipPeriodicUpdateRate,
+		RipTimeoutThreshold:   config.RipTimeoutThreshold,
+		TcpRtoMin:             config.TcpRtoMin,
+		TcpRtoMax:             config.TcpRtoMax,
+
+		ForwardingTable: ForwardingTable{
+			Routes: routes,
+		},
+	}
+
+	//send over
+	/*
+	   for _, rn := range config.RipNeighbors {
+
+	   }*/
+	return stack, nil
 }
 
-//sending/receiving packets logic:
-
-const (
-	MaxMessageSize = 1400
-)
+// sending/receiving packets logic:
 type Packet struct {
 	Header ipv4header.IPv4Header
-	Body []byte
+	Body   []byte
 }
-type HandlerFunc = func (*Packet, []interface{})
-func (stack *IPStack) RegisterRecvHandler (protocolNum uint8, callbackFunc HandlerFunc) {
+
+type HandlerFunc = func(*Packet, []interface{})
+
+func (stack *IPStack) RegisterRecvHandler(protocolNum uint8, callbackFunc HandlerFunc) {
 	stack.Handlers[protocolNum] = callbackFunc
 }
-func TestPacketHandler(packet *Packet, conn net.UDPConn) {
-	fmt.Println("Test packet received")
+
+func TestPacketHandler(packet *Packet, args []interface{}) {
+	srcIP := packet.Header.Src
+	dstIP := packet.Header.Dst
+	ttl := packet.Header.TTL
+	data := string(packet.Body)
+	fmt.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n", srcIP, dstIP, ttl, data)
+	fmt.Print("> ")
 }
 
-// func RIPHandler(packet *Packet, args []interface{}) {
-// 	fmt.Println("RIP packet received")
-// }
-
-//pass interface by reference?
-func SendIP(iface Interface, dst netip.Addr, table *ForwardingTable, protocolNum uint8, data []byte) (error) { 
-	// Do we do the UDP stuff here or somewhere else?? 
+// pass interface by reference?
+func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) error {
+	// Do we do the UDP stuff here or somewhere else??
 	// Turn the address string into a UDPAddr for the connection
-	route, found, _ := MatchPrefix(table, dst)
-	if !found {
-		fmt.Println("No route found for packet")
+	dst := header.Dst
+	table := stack.ForwardingTable
+	route, found, _ := table.MatchPrefix(dst)
+	if found == -1 {
+		fmt.Println("No matching prefix found")
 		return nil
 	}
 
-	// bindAddrString := fmt.Sprintf(":%s", iface.UDPAddr.Port())
-	// bindLocalAddr, err := net.ResolveUDPAddr("udp4", bindAddrString)
-	// if err != nil {
-	// 	log.Panicln("Error resolving address:  ", err)
-	// }
-	
-	remoteAddrString := fmt.Sprintf("%s:%s", route.NextHopUDP.Addr(),route.NextHopUDP.Port())
-	remoteAddr, err := net.ResolveUDPAddr("udp4", remoteAddrString)
-	if err != nil {
-		log.Panicln("Error resolving remote address:  ", err)
-		return err	
+	var nextHop netip.AddrPort
+	var conn *net.UDPConn
+
+	if route.RoutingMode == RoutingTypeLocal {
+		conn = route.Iface.UdpSocket
+		if !route.Iface.UpOrDown {
+			if header.Protocol == 0 {
+				fmt.Println("Sent 0 bytes")
+			}
+			return nil
+		}
+		if route.VirtualIP == dst {
+			//print bytes sents
+			fmt.Println("Sent", len(data)+20, "bytes")
+			if header.TTL == 32 {
+				header.TTL = header.TTL - 1
+			}
+			TestPacketHandler(&Packet{Header: *header, Body: data}, []interface{}{stack})
+			return nil
+		}
+		for _, n := range stack.Neighbors {
+			if n.DestAddr == dst {
+				nextHop = n.UDPAddr
+			}
+		}
+	} else {
+		iroute, _, _ := table.MatchPrefix(route.VirtualIP)
+		conn = iroute.Iface.UdpSocket
+		if !iroute.Iface.UpOrDown {
+			return nil
+		}
+		for _, n := range stack.Neighbors {
+			if n.DestAddr == route.VirtualIP {
+				nextHop = n.UDPAddr
+			}
+		}
 	}
 
-	conn, err := net.ListenUDP("udp4", remoteAddr)
-	if err != nil {
-		log.Panicln("Dial: ", err)
+	if !nextHop.IsValid() {
+		fmt.Println("No valid neighbor found for VIP:" + dst.String() + ", dropping packet")
+		return nil
 	}
 
-	hdr := ipv4header.IPv4Header{
-		Version:  4,
-		Len: 	20, // Header length is always 20 when no IP options
-		TOS:      0,
-		TotalLen: ipv4header.HeaderLen + len(data),
-		ID:       0,
-		Flags:    0,
-		FragOff:  0,
-		TTL:      16, // idk man
-		Protocol: int(protocolNum),
-		Checksum: 0, // Should be 0 until checksum is computed
-		Src:      iface.AssignedIP, // double check
-		Dst:      dst,
-		Options:  []byte{},
+	headerBytes, err := header.Marshal()
+
+	header.Checksum = int(ComputeChecksum(headerBytes))
+	if err != nil {
+		log.Fatalln("Error marshalling header:  ", err)
 	}
-    // Assemble the header into a byte array
-	headerBytes, err := hdr.Marshal()
+	headerBytes, err = header.Marshal()
 	if err != nil {
 		log.Fatalln("Error marshalling header:  ", err)
 	}
 
-	// Compute the checksum (see below)
-	// Cast back to an int, which is what the Header structure expects
-	hdr.Checksum = int(ComputeChecksum(headerBytes))
-
-	headerBytes, err = hdr.Marshal()
-	if err != nil {
-		log.Fatalln("Error marshalling header:  ", err)
-	}
-
-	// Append header + message into one byte array
 	bytesToSend := make([]byte, 0, len(headerBytes)+len(data))
 	bytesToSend = append(bytesToSend, headerBytes...)
-	bytesToSend = append(bytesToSend, []byte(data)...)
+	bytesToSend = append(bytesToSend, data...)
 
-	// Send the message to the "link-layer" addr:port on UDP
-	// FOr h1:  send to port 5002
-	// ONE CALL TO WriteToUDP => 1 PACKET
-	bytesWritten, err := conn.WriteToUDP(bytesToSend, remoteAddr)
+	bytesWritten, err := conn.WriteToUDP(bytesToSend, net.UDPAddrFromAddrPort(nextHop))
+
 	if err != nil {
 		log.Panicln("Error writing to socket: ", err)
 	}
-	fmt.Printf("Sent %d bytes\n", bytesWritten)
+
+	if header.Protocol == 0 && header.TTL == 32 {
+		fmt.Printf("Sent %d bytes\n", bytesWritten)
+	}
 	return nil
 }
 
-//maybe pass interface by reference
-func ReceiveIP(addr *netip.AddrPort, table *ForwardingTable, iface Interface, stack *IPStack) (*Packet, *net.UDPAddr, error) {
-    listenString := fmt.Sprintf(":%d", iface.UDPAddr.Port())
-    listenAddr, err := net.ResolveUDPAddr("udp4", listenString)
-    if err != nil {
-        log.Fatalln("Error resolving UDP address: ", err)
-    }
-    
-    // Create a new variable for the UDP connection
-    conn, err := net.ListenUDP("udp4", listenAddr)
-    if err != nil {
-        log.Panicln("Could not bind to UDP port: ", err)
-    }
+// maybe pass interface by reference
+func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
+	conn := route.Iface.UdpSocket
+	addr := route.VirtualIP
 
 	for {
-		buffer := make([]byte, MaxMessageSize)
-
-		_, sourceAddr, err := conn.ReadFromUDP(buffer)
+		buffer := make([]byte, MAX_MESSAGE_SIZE)
+		n, _, err := conn.ReadFromUDP(buffer)
 		if err != nil {
 			log.Panicln("Error reading from UDP socket ", err)
 		}
+
+		if !route.Iface.UpOrDown {
+			continue
+		}
+
 		// Marshal the received byte array into a UDP header
 		// NOTE:  This does not validate the checksum or check any fields
 		// (You'll need to do this part yourself)
 		hdr, err := ipv4header.ParseHeader(buffer)
+		hdr.TTL = hdr.TTL - 1
 
 		if err != nil {
 			// What should you if the message fails to parse?
@@ -250,49 +308,38 @@ func ReceiveIP(addr *netip.AddrPort, table *ForwardingTable, iface Interface, st
 		// See ValudateChecksum for details.
 		headerBytes := buffer[:headerSize]
 		checksumFromHeader := uint16(hdr.Checksum)
-		computedChecksum := ValidateChecksum(headerBytes, checksumFromHeader)
 
+		message := buffer[headerSize:n]
+		packet := &Packet{
+			Header: *hdr,
+			Body:   message,
+		}
+
+		hdr.Checksum = 0
+		computedChecksum := ValidateChecksum(headerBytes, checksumFromHeader)
 		if computedChecksum != checksumFromHeader {
 			fmt.Println("Checksums do not match, dropping packet")
+			fmt.Print("> ")
 			continue
 		}
 
-		hdr.TTL = hdr.TTL - 1
-
 		// Next, get the message, which starts after the header
-		message := buffer[headerSize:]
-		if hdr.Dst == addr.Addr() {
+		if hdr.Dst == addr {
 			if hdr.TTL == 0 {
 				fmt.Println("TTL is 0, dropping packet")
+				fmt.Print("> ")
 				continue
 			}
-
-			packet := &Packet {
-				Header: *hdr,
-				Body: message,
-			}
-
 			if handler, exists := stack.Handlers[uint8(hdr.Protocol)]; exists {
-				handler(packet, []interface{}{conn, sourceAddr})
+				//for tcp, may need to change this code to pass in different parameters for rip, tcp, and test, although test doesn't need any parameters other than the packet.
+				handler(packet, []interface{}{stack})
 			} else {
 				fmt.Printf("No handler for protocol %d\n", hdr.Protocol)
 			}
 		} else {
-			// Forward the packet
-			route, found, _ := MatchPrefix(table, hdr.Dst)
-			if !found {
-				fmt.Println("No route found for packet")
-				//what to do here?
-				continue
-			}
-			fmt.Println("Forwarding packet to ", route.NextHop)
-			SendIP(iface, route.NextHop, table, uint8(hdr.Protocol), message)
+			SendIP(stack, hdr, message)
 		}
-		// Finally, print everything out
-		// fmt.Printf("Received IP packet from %s\nHeader:  %v\nChecksum:  %s\nMessage:  %s\n",
-		// 	sourceAddr.String(), hdr, checksumState, string(message))
 	}
-
 }
 
 func ValidateChecksum(b []byte, fromHeader uint16) uint16 {
@@ -310,31 +357,4 @@ func ComputeChecksum(b []byte) uint16 {
 	// See ValidateChecksum in the receiver file for details.
 	checksumInv := checksum ^ 0xffff
 	return checksumInv
-}
-
-
-func MatchPrefix(table *ForwardingTable, addr netip.Addr) (Route, bool, error) {
-	var longestRoute Route
-	var longestPrefixLength = -1
-	found := false
-	
-	for _, route := range table.Routes {
-		if route.Prefix.Contains(addr) {
-			prefixLength := route.Prefix.Bits() 
-			if prefixLength > longestPrefixLength {
-				longestRoute = route
-				longestPrefixLength = prefixLength
-				found = true
-			}
-		}
-	}
-
-	if !found {
-		return Route{}, false, nil
-	}
-	return longestRoute, true, nil
-}
-
-func interfaceR(){
-
 }

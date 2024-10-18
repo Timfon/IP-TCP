@@ -7,6 +7,7 @@ import (
   "IP/pkg/ipstack"
   "IP/pkg/repl"
 	"os"
+	"IP/pkg/rippacket"
 )
 
 func main() {
@@ -26,15 +27,25 @@ func main() {
   if err != nil {
 	panic(err)
 	  }
-
-  fmt.Println(stack) 
   //need to consult forwarding table to know the src of a packet interesting
   //hacky solution for now
+  stack.RegisterRecvHandler(0, ipstack.TestPacketHandler)
+  stack.RegisterRecvHandler(200, rippacket.RipPacketHandler)
 
   go repl.StartRepl(stack, "router")
 
-  for _, iface := range stack.Interfaces{
-	go ipstack.ReceiveIP(&iface.UDPAddr, &stack.ForwardingTable, iface, stack)
+  for _, routes := range stack.ForwardingTable.Routes{
+	go ipstack.ReceiveIP(routes, stack)
   }
+
+  go rippacket.CheckRouteTimeouts(stack);
+
+  go rippacket.SendRIPRequest(stack);
+
+  go rippacket.SendPeriodicRIP(stack);
+
+  
+
+  //extra thread for sending periodic rip commands
   select{}
 }
