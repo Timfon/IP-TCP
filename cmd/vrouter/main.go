@@ -38,10 +38,13 @@ func main() {
 	go ipstack.ReceiveIP(routes, stack)
   }
 
-  go rippacket.SendRIPRequest(stack);
-  //go rippacket.CheckRouteTimeouts(stack);
+  go rippacket.CheckRouteTimeouts(stack);
 
-  go rippacket.SendPeriodicRIP(stack);
+  go rippacket.SendRIPRequest(stack);
+
+  //go rippacket.SendPeriodicRIP(stack);
+
+  
 
   //extra thread for sending periodic rip commands
   select{}

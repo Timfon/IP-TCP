@@ -142,16 +142,15 @@ func SendRIPResponse(stack *ipstack.IPStack, routes []ipstack.Route) {
 }
 
 func CheckRouteTimeouts(stack *ipstack.IPStack) {
-    now := time.Now()
+   
     for{
-        fmt.Println("hi")
+        now := time.Now()
         stack.ForwardingTable.Mu.Lock()
-        
+        //fmt.Println("Lock acquired")
         validRoutes := []ipstack.Route{}
         modifiedRoutes:= []ipstack.Route{}
         for _, route := range stack.ForwardingTable.Routes {
-            if route.RoutingMode == 2{
-                
+            if route.RoutingMode == 2 { 
                 if now.Sub(route.UpdateTime) > 12 * time.Second {
                     fmt.Println("Route timeout: ", route.Prefix)
                     // Route has expired, set cost to infinity and remove after triggering update
@@ -161,14 +160,16 @@ func CheckRouteTimeouts(stack *ipstack.IPStack) {
                     continue
                 }
             }
-            validRoutes = append(validRoutes, route)
         }
         stack.ForwardingTable.Mu.Unlock()
         if len(modifiedRoutes) > 0{
             fmt.Println("hi")
             SendRIPResponse(stack, modifiedRoutes)
+            stack.ForwardingTable.Mu.Lock()
             stack.ForwardingTable.Routes = validRoutes  
+            stack.ForwardingTable.Mu.Unlock()
         }
+        time.Sleep(500 * time.Millisecond)
 
     }
 }
@@ -197,9 +198,11 @@ func RipPacketHandler(packet *ipstack.Packet, args []interface{}) {
 func SendPeriodicRIP(stack *ipstack.IPStack) {
     for {
         time.Sleep(5 * time.Second)
+        var ftable_copy = make([]ipstack.Route, len(stack.ForwardingTable.Routes))
 		stack.ForwardingTable.Mu.Lock()
-		var ftable_copy = make([]ipstack.Route, len(stack.ForwardingTable.Routes))
-		copy(ftable_copy, stack.ForwardingTable.Routes)
+		for i, v := range stack.ForwardingTable.Routes {
+            ftable_copy[i] = v
+        }
 		stack.ForwardingTable.Mu.Unlock()
   
 		SendRIPResponse(stack, ftable_copy)
