@@ -33,7 +33,7 @@ func main() {
   go repl.StartRepl(stack, "host")
 
   for _, route := range stack.ForwardingTable.Routes{
-    if route.Iface != (ipstack.Interface{}){
+    if route.RoutingMode == 3 {
       go ipstack.ReceiveIP(route, stack)
     }
   }

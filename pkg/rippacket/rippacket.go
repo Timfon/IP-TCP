@@ -204,7 +204,7 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
     iface := ipstack.Interface{}
     for _, route := range stack.ForwardingTable.Routes {
         if route.VirtualIP == srcAddr {
-            iface = route.Iface
+            iface = *route.Iface
             break
         }
     }
@@ -258,7 +258,7 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
         } else {
             // New route, add to forwarding table
             newRoute := ipstack.Route{
-                Iface:    iface,
+                Iface:    &iface,
                 Prefix:    prefix,
                 Cost:      totalCost,
                 VirtualIP:   srcAddr, //Destination address

@@ -25,8 +25,9 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
           stack.ForwardingTable.Mu.Lock()    
           for _, route := range stack.ForwardingTable.Routes {
                 var ud = "down"
-                var iface = route.Iface
-                if iface != (ipstack.Interface{}) {
+                
+                if route.RoutingMode == 3 {
+                  var iface = route.Iface
                     if iface.UpOrDown {
                         ud = "up"
                     }
@@ -40,7 +41,9 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
         w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
           fmt.Fprintln(w, "Iface\tVIP\tUDPAddr")
           for _, neighbor := range stack.Neighbors {
-              fmt.Fprintln(w, neighbor.InterfaceName + "\t" + neighbor.DestAddr.String() + "\t" + neighbor.UDPAddr.String())
+              if(stack.Interfaces[neighbor.InterfaceName].UpOrDown){
+                fmt.Fprintln(w, neighbor.InterfaceName + "\t" + neighbor.DestAddr.String() + "\t" + neighbor.UDPAddr.String())
+              }
           }
           w.Flush()
       } else if strings.HasPrefix(input, "send") {
@@ -107,6 +110,33 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
         }
         stack.ForwardingTable.Mu.Unlock()
         w.Flush()
+      } else if strings.HasPrefix(input, "up") {
+        parts := strings.SplitN(input, " ", 2)
+        if len(parts) != 2 {
+            fmt.Println("Usage: up <ifname>")
+            continue
+        }
+
+        ifname := parts[1]
+
+        if value, ok := stack.Interfaces[ifname]; ok {
+          value.UpOrDown = true
+          stack.Interfaces[ifname] = value
+        } 
+
+      } else if strings.HasPrefix(input, "down") {
+        parts := strings.SplitN(input, " ", 2)
+        if len(parts) != 2 {
+            fmt.Println("Usage: down <ifname>")
+            continue
+        }
+
+        ifname := parts[1]
+
+        if value, ok := stack.Interfaces[ifname]; ok {
+         value.UpOrDown = false
+         stack.Interfaces[ifname] = value
+      } 
       }
      
   }
