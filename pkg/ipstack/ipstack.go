@@ -252,7 +252,10 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 	if err != nil {
 		log.Panicln("Error writing to socket: ", err)
 	}
-	fmt.Printf("Sent %d bytes\n", bytesWritten)
+
+	if header.Protocol == 0 {
+		fmt.Printf("Sent %d bytes\n", bytesWritten)
+	}
 	return nil
 }
 
