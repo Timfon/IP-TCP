@@ -97,11 +97,11 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
         for _, route := range stack.ForwardingTable.Routes {
             switch route.RoutingMode {
             case 1:
-                fmt.Fprintln(w, "S\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + "1")
+                fmt.Fprintln(w, "S\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + fmt.Sprint(route.Cost))
             case 2:
-                fmt.Fprintln(w, "R\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + "1")
+                fmt.Fprintln(w, "R\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + fmt.Sprint(route.Cost))
             case 3:
-                fmt.Fprintln(w, "L\t" + route.Prefix.String() + "\tLOCAL:" + route.Iface.Name + "\t" + "1")
+                fmt.Fprintln(w, "L\t" + route.Prefix.String() + "\tLOCAL:" + route.Iface.Name + "\t" + fmt.Sprint(route.Cost))
             }
             //change cost later
         }

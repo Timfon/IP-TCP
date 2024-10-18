@@ -40,6 +40,7 @@ func main() {
 
   rippacket.SendRIPRequest(stack);
 
+  go rippacket.SendPeriodicRIP(stack);
 
   //extra thread for sending periodic rip commands
   select{}

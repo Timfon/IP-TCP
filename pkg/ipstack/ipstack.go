@@ -142,7 +142,7 @@ func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
 			RoutingMode: RoutingTypeStatic,
 			Prefix: p,
 			VirtualIP: addr,
-			Cost: 10, //higher cost for a static route??
+			Cost: 0, //higher cost for a static route??
 		}
 		routes = append(routes, route)
 	}
@@ -292,7 +292,6 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 		
 		hdr.Checksum = 0
 		computedChecksum := ValidateChecksum(headerBytes, checksumFromHeader)
-		fmt.Println(computedChecksum, checksumFromHeader)
 		if computedChecksum != checksumFromHeader {
 			fmt.Println("Checksums do not match, dropping packet")
 			continue
