@@ -38,8 +38,8 @@ func main() {
 	go ipstack.ReceiveIP(routes, stack)
   }
 
-  rippacket.SendRIPRequest(stack);
-  go rippacket.CheckRouteTimeouts(stack);
+  go rippacket.SendRIPRequest(stack);
+  //go rippacket.CheckRouteTimeouts(stack);
 
   go rippacket.SendPeriodicRIP(stack);
 

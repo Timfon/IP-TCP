@@ -143,25 +143,34 @@ func SendRIPResponse(stack *ipstack.IPStack, routes []ipstack.Route) {
 
 func CheckRouteTimeouts(stack *ipstack.IPStack) {
     now := time.Now()
-    stack.ForwardingTable.Mu.Lock()
-    defer stack.ForwardingTable.Mu.Unlock()
-    validRoutes := []ipstack.Route{}
-    modifiedRoutes:= []ipstack.Route{}
-    for _, route := range stack.ForwardingTable.Routes {
-        if route.RoutingMode == 2{
-            if now.Sub(route.UpdateTime) > 12 * time.Second {
-                fmt.Println("Route timeout: ", route.Prefix)
-                // Route has expired, set cost to infinity and remove after triggering update
-                route.Cost = 16 // Set to infinity
+    for{
+        fmt.Println("hi")
+        stack.ForwardingTable.Mu.Lock()
+        
+        validRoutes := []ipstack.Route{}
+        modifiedRoutes:= []ipstack.Route{}
+        for _, route := range stack.ForwardingTable.Routes {
+            if route.RoutingMode == 2{
                 
-                modifiedRoutes = append(modifiedRoutes, route)
-                continue
+                if now.Sub(route.UpdateTime) > 12 * time.Second {
+                    fmt.Println("Route timeout: ", route.Prefix)
+                    // Route has expired, set cost to infinity and remove after triggering update
+                    route.Cost = 16 // Set to infinity
+                    
+                    modifiedRoutes = append(modifiedRoutes, route)
+                    continue
+                }
             }
+            validRoutes = append(validRoutes, route)
         }
-        validRoutes = append(validRoutes, route)
+        stack.ForwardingTable.Mu.Unlock()
+        if len(modifiedRoutes) > 0{
+            fmt.Println("hi")
+            SendRIPResponse(stack, modifiedRoutes)
+            stack.ForwardingTable.Routes = validRoutes  
+        }
+
     }
-    SendRIPResponse(stack, modifiedRoutes)
-    stack.ForwardingTable.Routes = validRoutes  
 }
 
 // a response to a RIP request, a triggered update, or a periodic update
