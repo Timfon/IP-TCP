@@ -27,7 +27,7 @@ A list of Route structures was used to create the forwarding table for each node
 A generic ReceiveIP() and SendIP() function was implemented in the ipstack, which both the vhost and vrouter can use. These functions handle any kind of packet and will map the protocol number of the packet to the appropriate handler function. 0 goes to TestPacketHandler(), and 200 goes to RIPPacketHandler. This map of protocol number to handler function is stored in the ipstack, and the vhost and vrouter must register the handler functions before being able to use them. This allows the IP program to be more extensible in the future, when TCP packets need to also be handled.
 
 ## Bugs
-None identified during testing.
+None
 
 ## Tests
 - Wireshark
