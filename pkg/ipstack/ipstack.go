@@ -196,6 +196,7 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 	// Turn the address string into a UDPAddr for the connection
 	dst:= header.Dst
 	table:= stack.ForwardingTable
+
 	route, found, _ := table.MatchPrefix(dst)
 	if found == -1 {
 		fmt.Println("No matching prefix found")

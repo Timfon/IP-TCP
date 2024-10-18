@@ -60,9 +60,10 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
           }
           messageBytes := []byte(parts[2])
 
+        
         table := stack.ForwardingTable
         route, found, _ := table.MatchPrefix(destAddr)
-          if found != -1 {
+          if found == -1 {
               fmt.Println("No matching prefix found")
               continue
           }
