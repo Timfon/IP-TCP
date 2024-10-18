@@ -29,7 +29,7 @@ const (
 )
 
 type Route struct {
-	Iface Interface
+	Iface *Interface
 	RoutingMode RoutingMode
 	Prefix netip.Prefix
 	VirtualIP netip.Addr
@@ -82,7 +82,7 @@ func (table *ForwardingTable) MatchPrefix(addr netip.Addr) (Route, bool, error) 
 
 type IPStack struct {
 	Handlers map[uint8]HandlerFunc
- 	Interfaces []Interface
+ 	Interfaces map[string]*Interface
 	Neighbors  []lnxconfig.NeighborConfig
 	RoutingMode lnxconfig.RoutingMode
 
@@ -108,7 +108,8 @@ type IPStack struct {
 
 func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
 	
-	var ifaces []Interface
+	var ifaces map[string]*Interface
+	ifaces = make(map[string]*Interface)
 	var routes []Route
 	for _, interfaceConfig := range config.Interfaces {
 
@@ -127,14 +128,14 @@ func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
 		}
 
 		route := Route{
-			Iface: iface,
+			Iface: &iface,
 			Prefix: interfaceConfig.AssignedPrefix,
 			RoutingMode: RoutingTypeLocal,
 			VirtualIP: interfaceConfig.AssignedIP,
 			Cost: 0,//change later
 		}
 		routes = append(routes, route)
-		ifaces = append(ifaces, iface)
+		ifaces[iface.Name] = &iface
 	}
 
 	for p, addr := range config.StaticRoutes {
@@ -262,6 +263,12 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 		if err != nil {
 			log.Panicln("Error reading from UDP socket ", err)
 		}
+
+
+		if !route.Iface.UpOrDown{
+			continue
+		}
+
 		// Marshal the received byte array into a UDP header
 		// NOTE:  This does not validate the checksum or check any fields
 		// (You'll need to do this part yourself)
@@ -313,6 +320,7 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 			fmt.Println("Forwarding packet to ", route.VirtualIP)
 			SendIP(stack, hdr, message)
 		}
+		fmt.Print("> ")
 	}
 }
 
