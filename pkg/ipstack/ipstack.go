@@ -187,6 +187,7 @@ func TestPacketHandler(packet *Packet, args []interface{}) {
 	ttl := packet.Header.TTL
 	data := string(packet.Body) 
 	fmt.Printf("Received test packet: Src: %s, Dst: %s, TTL: %d, Data: %s\n", srcIP, dstIP, ttl, data)
+	fmt.Print("> ")
 }
 
 //pass interface by reference?
@@ -304,6 +305,7 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 		computedChecksum := ValidateChecksum(headerBytes, checksumFromHeader)
 		if computedChecksum != checksumFromHeader {
 			fmt.Println("Checksums do not match, dropping packet")
+			fmt.Print("> ")
 			continue
 		}
 
@@ -311,6 +313,7 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 		if hdr.Dst == addr {
 			if hdr.TTL == 0 {
 				fmt.Println("TTL is 0, dropping packet")
+				fmt.Print("> ")
 				continue
 			}
 			if handler, exists := stack.Handlers[uint8(hdr.Protocol)]; exists {
@@ -322,8 +325,8 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 		} else {	
 			fmt.Println("Forwarding packet to ", route.VirtualIP)
 			SendIP(stack, hdr, message)
+			fmt.Print("> ")
 		}
-		fmt.Print("> ")
 	}
 }
 
