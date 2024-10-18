@@ -103,7 +103,9 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
             case 1:
                 fmt.Fprintln(w, "S\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + fmt.Sprint("-"))
             case 2:
+                if route.Cost < 16 {
                 fmt.Fprintln(w, "R\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + fmt.Sprint(route.Cost))
+                }
             case 3:
                 fmt.Fprintln(w, "L\t" + route.Prefix.String() + "\tLOCAL:" + route.Iface.Name + "\t" + fmt.Sprint(route.Cost))
             }

@@ -144,6 +144,7 @@ func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error){
 		}
 		routes = append(routes, route)
 	}
+  
   stack := &IPStack{
 	Handlers: make(map[uint8]HandlerFunc),
 	Interfaces: ifaces,
@@ -196,7 +197,6 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 	// Turn the address string into a UDPAddr for the connection
 	dst:= header.Dst
 	table:= stack.ForwardingTable
-
 	route, found, _ := table.MatchPrefix(dst)
 	if found == -1 {
 		fmt.Println("No matching prefix found")
@@ -268,7 +268,7 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 
 	for {
 		buffer := make([]byte, MAX_MESSAGE_SIZE)
-		_, _, err := conn.ReadFromUDP(buffer)
+		n, _, err := conn.ReadFromUDP(buffer)
 		if err != nil {
 			log.Panicln("Error reading from UDP socket ", err)
 		}
@@ -300,7 +300,7 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 		headerBytes := buffer[:headerSize]
 		checksumFromHeader := uint16(hdr.Checksum)
 
-		message := buffer[headerSize:]
+		message := buffer[headerSize:n]
 		packet := &Packet {
 			Header: *hdr,
 			Body: message,
