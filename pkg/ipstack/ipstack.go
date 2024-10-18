@@ -231,6 +231,7 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 
 	if !nextHop.IsValid(){
 		fmt.Println("No valid next hop port found")
+		return nil
 	}
 
 	headerBytes, err := header.Marshal()
@@ -327,9 +328,7 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 				fmt.Printf("No handler for protocol %d\n", hdr.Protocol)
 			}
 		} else {	
-			fmt.Println("Forwarding packet to ", route.VirtualIP)
 			SendIP(stack, hdr, message)
-			fmt.Print("> ")
 		}
 	}
 }

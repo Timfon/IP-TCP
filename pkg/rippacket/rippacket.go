@@ -103,7 +103,15 @@ func SendRIPResponse(stack *ipstack.IPStack, routes []ipstack.Route) {
         for _, route := range routes {
             addr := route.Prefix.Addr().String()
             mask := binary.BigEndian.Uint32(net.CIDRMask(route.Prefix.Bits(), 32))
-            cost := route.Cost
+
+
+
+            var cost uint32
+            if route.VirtualIP == RIPNeighbor {
+                cost = 16
+            } else {
+                cost = route.Cost
+            }
             ip := net.ParseIP(addr).To4() // Convert string to net.IP and extract IPv4
             if ip == nil {
                 // Handle error or unsupported cases for non-IPv4 addresses
@@ -199,6 +207,7 @@ func SendPeriodicRIP(stack *ipstack.IPStack) {
         var ftable_copy = make([]ipstack.Route, len(stack.ForwardingTable.Routes))
 		stack.ForwardingTable.Mu.Lock()
 		for i, v := range stack.ForwardingTable.Routes {
+
             ftable_copy[i] = v
         }
 		stack.ForwardingTable.Mu.Unlock()
