@@ -209,6 +209,9 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 
 	if route.RoutingMode == RoutingTypeLocal {
 		conn = route.Iface.UdpSocket
+		if !route.Iface.UpOrDown{
+			return nil
+		}
 		for _, n := range stack.Neighbors {
 			if n.DestAddr == dst {
 				nextHop = n.UDPAddr
@@ -217,6 +220,9 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 	  } else {
 		iroute, _, _ := table.MatchPrefix(route.VirtualIP)
 		conn = iroute.Iface.UdpSocket
+		if !iroute.Iface.UpOrDown{
+			return nil
+		}
 		for _, n := range stack.Neighbors {
 			if n.DestAddr == route.VirtualIP {
 				nextHop = n.UDPAddr
