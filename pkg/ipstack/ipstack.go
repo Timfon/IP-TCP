@@ -211,6 +211,12 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) (error) 
 		if !route.Iface.UpOrDown{
 			return nil
 		}
+		if route.VirtualIP == dst {
+			//print bytes sents
+			fmt.Println("Sent", len(data), "bytes")
+			TestPacketHandler(&Packet{Header: *header, Body: data}, []interface{}{stack})
+			return nil
+		}
 		for _, n := range stack.Neighbors {
 			if n.DestAddr == dst {
 				nextHop = n.UDPAddr
