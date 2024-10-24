@@ -1,4 +1,4 @@
-module IP
+module IP-TCP
 
 go 1.23.1
 
