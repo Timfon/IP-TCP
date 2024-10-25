@@ -31,3 +31,52 @@ None
 
 ## Tests
 - Wireshark
+
+TCP Gearup 1 Notes:
+
+TCP hosts only!
+
+SendIP() -> stack
+
+TCP Stack: The Components:
+    REPL "Apps" that use tcp stack: makes call to tcp stack via calls to socket API
+
+    Socket API: OS socket API(VConnect, VListen)
+    Sockets: Two types:
+        Normal socket- one per active TCP connection, has TCB (buffers, TCP state, etc)
+        Listen socket- one per open listen port, "I want to receive new connections on this port"
+        Has no TCB (can't send/receive)
+
+    Socket table matches you to a str<D-z>`
+    Maps packet -> socekts based on header info
+
+    TCP Logic, state machine, sliding window, connect up and use ur SendIP() to send packets
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

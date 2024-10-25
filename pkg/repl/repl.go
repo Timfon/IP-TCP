@@ -5,9 +5,9 @@ import (
   "os"
   "bufio"
   "strings"
-  "IP/pkg/ipstack"
+  "IP-TCP/pkg/ipstack"
   "net/netip"
-  "IP/pkg/ipv4header"
+  "IP-TCP/pkg/ipv4header"
 )
 
 func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {

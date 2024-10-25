@@ -1,8 +1,8 @@
 package rippacket
 
 import (
-	"IP/pkg/ipstack"
-	"IP/pkg/ipv4header"
+	"IP-TCP/pkg/ipstack"
+	"IP-TCP/pkg/ipv4header"
 	"encoding/binary"
 	"fmt"
 	"net"

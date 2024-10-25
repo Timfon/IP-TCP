@@ -1,8 +1,8 @@
 package ipstack
 
 import (
-	"IP/pkg/ipv4header"
-	"IP/pkg/lnxconfig"
+	"IP-TCP/pkg/ipv4header"
+	"IP-TCP/pkg/lnxconfig"
 	"fmt"
 	"log"
 	"net"

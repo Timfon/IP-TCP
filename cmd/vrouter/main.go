@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 	//"net/netip"
-  "IP/pkg/lnxconfig"
-  "IP/pkg/ipstack"
-  "IP/pkg/repl"
+  "IP-TCP/pkg/lnxconfig"
+  "IP-TCP/pkg/ipstack"
+  "IP-TCP/pkg/repl"
 	"os"
-	"IP/pkg/rippacket"
+	"IP-TCP/pkg/rippacket"
 )
 
 func main() {
