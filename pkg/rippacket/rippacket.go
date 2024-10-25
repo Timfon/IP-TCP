@@ -1,7 +1,7 @@
 package rippacket
 
 import (
-	"IP-TCP/pkg/ipstack"
+  "IP-TCP/pkg/iptcpstack"
 	"IP-TCP/pkg/ipv4header"
 	"encoding/binary"
 	"fmt"
@@ -55,7 +55,7 @@ func DeserializeRIPMessage(buffer []byte) *RIPMessage {
 	return &msg
 }
 
-func SendRIPRequest(stack *ipstack.IPStack) {
+func SendRIPRequest(stack *iptcpstack.IPStack) {
 	for _, RIPNeighbor := range stack.RipNeighbors {
 		table := stack.ForwardingTable
 		iroute, _, _ := table.MatchPrefix(RIPNeighbor)
@@ -85,11 +85,11 @@ func SendRIPRequest(stack *ipstack.IPStack) {
 			Dst:      RIPNeighbor,
 			Options:  []byte{},
 		}
-		ipstack.SendIP(stack, &hdr, messageBytes)
+		iptcpstack.SendIP(stack, &hdr, messageBytes)
 	}
 }
 
-func SendRIPResponse(stack *ipstack.IPStack, routes []ipstack.Route) {
+func SendRIPResponse(stack *iptcpstack.IPStack, routes []iptcpstack.Route) {
     for _, RIPNeighbor := range stack.RipNeighbors {
         iroute, _, _ := stack.ForwardingTable.MatchPrefix(RIPNeighbor)
         var srcIP = iroute.VirtualIP
@@ -145,18 +145,18 @@ func SendRIPResponse(stack *ipstack.IPStack, routes []ipstack.Route) {
             Dst:      RIPNeighbor,
             Options:  []byte{},
         }
-        ipstack.SendIP(stack, &hdr, messageBytes)
+        iptcpstack.SendIP(stack, &hdr, messageBytes)
     }
 }
 
-func CheckRouteTimeouts(stack *ipstack.IPStack) {
+func CheckRouteTimeouts(stack *iptcpstack.IPStack) {
    
     for{
         now := time.Now()
         stack.ForwardingTable.Mu.Lock()
         //fmt.Println("Lock acquired")
-        validRoutes := []ipstack.Route{}
-        modifiedRoutes:= []ipstack.Route{}
+        validRoutes := []iptcpstack.Route{}
+        modifiedRoutes:= []iptcpstack.Route{}
         for _, route := range stack.ForwardingTable.Routes {
             if route.RoutingMode == 2 { 
                 if now.Sub(route.UpdateTime) > 12 * time.Second && route.Cost < 16{
@@ -180,14 +180,14 @@ func CheckRouteTimeouts(stack *ipstack.IPStack) {
 }
 
 // a response to a RIP request, a triggered update, or a periodic update
-func RipPacketHandler(packet *ipstack.Packet, args []interface{}) {
+func RipPacketHandler(packet *iptcpstack.Packet, args []interface{}) {
 	msg := DeserializeRIPMessage(packet.Body)
-	stack := args[0].(*ipstack.IPStack)
+	stack := args[0].(*iptcpstack.IPStack)
 
 	if msg.Command == 1 { // or gets a triggered update, or a periodic update??
 		// Send a response to the request
 		stack.ForwardingTable.Mu.Lock()
-		var ftable_copy = make([]ipstack.Route, len(stack.ForwardingTable.Routes))
+		var ftable_copy = make([]iptcpstack.Route, len(stack.ForwardingTable.Routes))
 		copy(ftable_copy, stack.ForwardingTable.Routes)
 		stack.ForwardingTable.Mu.Unlock()
 
@@ -200,10 +200,10 @@ func RipPacketHandler(packet *ipstack.Packet, args []interface{}) {
 	}
 }
 
-func SendPeriodicRIP(stack *ipstack.IPStack) {
+func SendPeriodicRIP(stack *iptcpstack.IPStack) {
     for {
         time.Sleep(5 * time.Second)
-        var ftable_copy = make([]ipstack.Route, len(stack.ForwardingTable.Routes))
+        var ftable_copy = make([]iptcpstack.Route, len(stack.ForwardingTable.Routes))
 		stack.ForwardingTable.Mu.Lock()
 		for i, v := range stack.ForwardingTable.Routes {
 
@@ -215,7 +215,7 @@ func SendPeriodicRIP(stack *ipstack.IPStack) {
 	}
 }
 
-func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
+func UpdateForwardingTable(packet *iptcpstack.Packet, stack *iptcpstack.IPStack) {
     msg := DeserializeRIPMessage(packet.Body)
     srcAddr := packet.Header.Src    // N from Neighbor
     //dstAddr := packet.Header.Dst    // Receiver's IP address
@@ -229,7 +229,7 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
         fmt.Println("No matching prefix found")
     }
 
-    updatedRoutes := []ipstack.Route{}
+    updatedRoutes := []iptcpstack.Route{}
     for _, entry := range msg.Entries {
         addrBytes := make([]byte, 4)
         binary.BigEndian.PutUint32(addrBytes, entry.Address)
@@ -279,13 +279,13 @@ func UpdateForwardingTable(packet *ipstack.Packet, stack *ipstack.IPStack) {
 			//fmt.Println(route.Prefix, dstAddr, route.VirtualIP)
         } else {
 			//fmt.Println(receiving_route.Prefix, srcAddr, receiving_route.VirtualIP)
-            newRoute := ipstack.Route{
+            newRoute := iptcpstack.Route{
                 Iface:       receiving_route.Iface,
                 Prefix:      prefix,
                 Cost:        entry.Cost + 1,
                 VirtualIP:   srcAddr, //route.virtualIP
                 UpdateTime:  time.Now(),
-                RoutingMode: ipstack.RoutingTypeRIP,
+                RoutingMode: iptcpstack.RoutingTypeRIP,
             }
 
             stack.ForwardingTable.Routes = append(stack.ForwardingTable.Routes, newRoute)

@@ -5,12 +5,12 @@ import (
   "os"
   "bufio"
   "strings"
-  "IP-TCP/pkg/ipstack"
+  "IP-TCP/pkg/iptcpstack"
   "net/netip"
   "IP-TCP/pkg/ipv4header"
 )
 
-func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
+func StartRepl(stack *iptcpstack.IPStack, hostOrRouter string) {
   reader := bufio.NewScanner(os.Stdin)
   for {
       fmt.Print("> ")
@@ -93,7 +93,7 @@ func StartRepl(stack *ipstack.IPStack, hostOrRouter string) {
             Dst:      destAddr,
             Options:  []byte{},
         }
-        ipstack.SendIP(stack, &hdr, messageBytes)
+        iptcpstack.SendIP(stack, &hdr, messageBytes)
 
       } else if input == "lr" {
         w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)

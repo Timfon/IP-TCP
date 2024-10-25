@@ -1,4 +1,4 @@
-package ipstack
+package iptcpstack
 
 import (
 	"IP-TCP/pkg/ipv4header"
@@ -9,7 +9,6 @@ import (
 	"net/netip"
 	"sync"
 	"time"
-
 	"github.com/google/netstack/tcpip/header"
 )
 
@@ -272,7 +271,7 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) error {
 }
 
 // maybe pass interface by reference
-func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
+func ReceiveIP(route Route, stack *IPStack, tcpstack *TCPStack) (*Packet, *net.UDPAddr, error) {
 	conn := route.Iface.UdpSocket
 	addr := route.VirtualIP
 
@@ -332,7 +331,7 @@ func ReceiveIP(route Route, stack *IPStack) (*Packet, *net.UDPAddr, error) {
 			}
 			if handler, exists := stack.Handlers[uint8(hdr.Protocol)]; exists {
 				//for tcp, may need to change this code to pass in different parameters for rip, tcp, and test, although test doesn't need any parameters other than the packet.
-				handler(packet, []interface{}{stack})
+				handler(packet, []interface{}{stack, tcpstack})
 			} else {
 				fmt.Printf("No handler for protocol %d\n", hdr.Protocol)
 			}

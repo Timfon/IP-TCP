@@ -4,7 +4,7 @@ import (
 	"fmt"
 	//"net/netip"
   "IP-TCP/pkg/lnxconfig"
-  "IP-TCP/pkg/ipstack"
+  "IP-TCP/pkg/iptcpstack"
   "IP-TCP/pkg/repl"
 	"os"
 	"IP-TCP/pkg/rippacket"
@@ -23,19 +23,21 @@ func main() {
 	}
 
 	// Goroutine for each interface
-  stack, err := ipstack.InitializeStack(lnxConfig)
+  stack, err := iptcpstack.InitializeStack(lnxConfig)
+  tcp_stack, err := iptcpstack.InitializeTCP(lnxConfig)
   if err != nil {
 	panic(err)
 	  }
   //need to consult forwarding table to know the src of a packet interesting
   //hacky solution for now
-  stack.RegisterRecvHandler(0, ipstack.TestPacketHandler)
+  stack.RegisterRecvHandler(0, iptcpstack.TestPacketHandler)
   stack.RegisterRecvHandler(200, rippacket.RipPacketHandler)
+  stack.RegisterRecvHandler(6, iptcpstack.TCPPacketHandler)
 
   go repl.StartRepl(stack, "router")
 
   for _, routes := range stack.ForwardingTable.Routes{
-	go ipstack.ReceiveIP(routes, stack)
+	go iptcpstack.ReceiveIP(routes, stack, tcp_stack)
   }
 
   go rippacket.CheckRouteTimeouts(stack);

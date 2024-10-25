@@ -3,14 +3,9 @@ import (
   "fmt"
   "os"
 	"IP-TCP/pkg/lnxconfig"
-  // "bufio"
   "IP-TCP/pkg/repl"
-  // "net"
-  "IP-TCP/pkg/ipstack"
-  // "net/netip"
   "IP-TCP/pkg/rippacket"
-
-  "IP-TCP/pkg/tcpstack"
+  "IP-TCP/pkg/iptcpstack"
 )
 
 func main() {
@@ -24,36 +19,32 @@ func main() {
 		panic(err)
 	}
   //sets everything up
-  ip_stack, err := ipstack.InitializeStack(lnxConfig)
+  ip_stack, err := iptcpstack.InitializeStack(lnxConfig)
   if err != nil {
     panic(err)
   }
 
   //tcp
-  tcp_stack, err := tcpstack.InitializeTCP(lnxConfig)
+  tcp_stack, err := iptcpstack.InitializeTCP(lnxConfig)
   if err != nil {
     panic(err)
   }
   
   //IP-TCP Handlers
-  ip_stack.RegisterRecvHandler(0, ipstack.TestPacketHandler)
+  ip_stack.RegisterRecvHandler(0, iptcpstack.TestPacketHandler)
   ip_stack.RegisterRecvHandler(200, rippacket.RipPacketHandler)
-
+  ip_stack.RegisterRecvHandler(6, iptcpstack.TCPPacketHandler)
   //TCP Stuff here
 
   //Receive IP
   for _, route := range ip_stack.ForwardingTable.Routes{
     if route.RoutingMode == 3 {
-      go ipstack.ReceiveIP(route, ip_stack)
+      go iptcpstack.ReceiveIP(route, ip_stack, tcp_stack)
     }
   }
 
   go repl.StartRepl(ip_stack, "host")
-
-  
-
   select{}
-
 }
 
 
