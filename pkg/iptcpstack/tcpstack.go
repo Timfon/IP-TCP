@@ -7,6 +7,7 @@ import (
   "IP-TCP/pkg/iptcp_utils"
   "fmt"
   "time"
+  "github.com/google/netstack/tcpip/header"
 )
 type TCPStack struct {
   TcpRtoMin time.Duration
@@ -14,6 +15,7 @@ type TCPStack struct {
   Sockets map[int]*Socket
   NextSocketID int
 }
+
 
 type Socket struct {
   SID int
@@ -24,6 +26,7 @@ type Socket struct {
   RemotePort uint16
   SeqNum  uint32
   AckNum  uint32
+  WindowSize uint16
 
   SendWindow []byte
 }
@@ -93,13 +96,62 @@ func TCPPacketHandler(packet *Packet, args []interface{}){
   //handle the packet
   switch sock.State {
   case "LISTEN":
-
+    //check if it is a SYN packet
+    if tcpHdr.Flags & header.TCPFlagSyn != 0 {
+      handleSynReceived(sock, packet, tcpHdr, stack)
+    }
+  case "SYN_SENT":
+    if tcHdr.Flags & header.TCPFlagSyn != 0 && tcpHdr.Flags & header.TCPFlagAck != 0 {
+      handleSynAckReceived(sock, packet, tcpHdr, stack)
+    }
+  case "SYN_RECEIVED":
+    if tcpHdr.Flags & header.TCPFlagAck != 0 {
+      handleAckReceived(sock, packet, tcpHdr, stack)
+    }
+  case "ESTABLISHED":
+    handleEstablished(sock, packet, tcpHdr, stack)
   }
 }
-//
-// func (stack *TCPStack) VListen(port uint16) (*socket.VTCPListener, error){
-//
-//
-// }
-//
+func handleSynReceived(sock *Socket, packet *Packet, tcpHdr *header.TCPFields, stack *IPStack){
+  //create a new socket
+  sock.State = "SYN_RECEIVED"
+	sock.RemoteAddr = packet.Header.Src
+	sock.RemotePort = tcpHdr.SrcPort
+	sock.AckNum = tcpHdr.SeqNum + 1
 
+	sock.SeqNum = uint32(time.Now().UnixNano())
+
+	// Send SYN-ACK
+	synAckHdr := header.TCPFields{
+		SrcPort:    sock.LocalPort,
+		DstPort:    sock.RemotePort,
+		SeqNum:     sock.SeqNum,
+		AckNum:     sock.AckNum,
+		Flags:      header.TCPFlagSyn | header.TCPFlagAck,
+		WindowSize: sock.WindowSize,
+	}
+	// Create and send SYN-ACK packet
+	sendTCPPacket(sock, synAckHdr, nil, stack)
+}
+
+func sendTCPPacket(sock *Socket, tcpHdr header.TCPFields, data []byte, stack *IPStack){
+
+  // Create IP packet
+ hdr := ipv4header.IPv4Header{
+            Version:  4,
+            Len: 	20, // Header length is always 20 when no IP options
+            TOS:      0,
+            TotalLen: ipv4header.HeaderLen + len(messageBytes),
+            ID:       0,
+            Flags:    0,
+            FragOff:  0,
+            TTL:      32, // idk man
+            Protocol: 0,
+            Checksum: 0, // Should be 0 until checksum is computed
+            Src:      srcIP, // double check
+            Dst:      destAddr,
+            Options:  []byte{},
+        }
+  // Send IP packet
+  SendIP(stack, &hdr, tcpPacket)
+}
