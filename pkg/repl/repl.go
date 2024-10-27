@@ -1,149 +1,164 @@
 package repl
+
 import (
-  "fmt"
-  "text/tabwriter"
-  "os"
-  "bufio"
-  "strings"
-  "IP-TCP/pkg/iptcpstack"
-  "net/netip"
-  "IP-TCP/pkg/ipv4header"
+	"IP-TCP/pkg/iptcpstack"
+	"IP-TCP/pkg/ipv4header"
+	"IP-TCP/pkg/socket"
+	"bufio"
+	"fmt"
+	"net/netip"
+	"os"
+	"strings"
+	"text/tabwriter"
 )
 
 func StartRepl(stack *iptcpstack.IPStack, hostOrRouter string) {
-  reader := bufio.NewScanner(os.Stdin)
-  for {
-      fmt.Print("> ")
-      if !reader.Scan() {
-          break
-      }
-      input := reader.Text()
-      
-      if input == "li" {
-        w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
-          fmt.Fprintln(w, "Name\tAddr/Prefix\tState")
-          stack.ForwardingTable.Mu.Lock()    
-          for _, route := range stack.ForwardingTable.Routes {
-                var ud = "down"
-                
-                if route.RoutingMode == 3 {
-                  var iface = route.Iface
-                    if iface.UpOrDown {
-                        ud = "up"
-                    }
-                
-                  p := netip.PrefixFrom(route.VirtualIP, route.Prefix.Bits())
-                  fmt.Fprintln(w, iface.Name + "\t" + p.String() + "\t" + ud) 
-             
-                }// change UP later to have the actual state of interface
-          }
-          stack.ForwardingTable.Mu.Unlock()
-          w.Flush()
-      } else if input == "ln" {
-        w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
-          fmt.Fprintln(w, "Iface\tVIP\tUDPAddr")
-          for _, neighbor := range stack.Neighbors {
-              if(stack.Interfaces[neighbor.InterfaceName].UpOrDown){
-                fmt.Fprintln(w, neighbor.InterfaceName + "\t" + neighbor.DestAddr.String() + "\t" + neighbor.UDPAddr.String())
-              }
-          }
-          w.Flush()
-      } else if strings.HasPrefix(input, "send") {
-          parts := strings.SplitN(input, " ", 3)
-          if len(parts) != 3 {
-              fmt.Println("Usage: send <addr> <message>")
-              continue
-          }
-          
-          destAddr, err := netip.ParseAddr(parts[1])
-          if err != nil {
-              fmt.Printf("Invalid IP address: %v\n", err)
-              continue
-          }
-          messageBytes := []byte(parts[2])
+	reader := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Print("> ")
+		if !reader.Scan() {
+			break
+		}
+		input := reader.Text()
 
-        
-        table := stack.ForwardingTable
-        route, found, _ := table.MatchPrefix(destAddr)
-          if found == -1 {
-              fmt.Println("No matching prefix found")
-              continue
-          }
+		if input == "li" {
+			w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
+			fmt.Fprintln(w, "Name\tAddr/Prefix\tState")
+			stack.ForwardingTable.Mu.Lock()
+			for _, route := range stack.ForwardingTable.Routes {
+				var ud = "down"
 
-          var srcIP netip.Addr
-          if route.RoutingMode == 4{
-            srcIP = route.VirtualIP
-          } else {
-            iroute, _, _ := table.MatchPrefix(route.VirtualIP)
-            srcIP = iroute.VirtualIP
-          }
+				if route.RoutingMode == 3 {
+					var iface = route.Iface
+					if iface.UpOrDown {
+						ud = "up"
+					}
 
-          hdr := ipv4header.IPv4Header{
-            Version:  4,
-            Len: 	20, // Header length is always 20 when no IP options
-            TOS:      0,
-            TotalLen: ipv4header.HeaderLen + len(messageBytes),
-            ID:       0,
-            Flags:    0,
-            FragOff:  0,
-            TTL:      32, // idk man
-            Protocol: 0,
-            Checksum: 0, // Should be 0 until checksum is computed
-            Src:      srcIP, // double check
-            Dst:      destAddr,
-            Options:  []byte{},
-        }
-        iptcpstack.SendIP(stack, &hdr, messageBytes)
+					p := netip.PrefixFrom(route.VirtualIP, route.Prefix.Bits())
+					fmt.Fprintln(w, iface.Name+"\t"+p.String()+"\t"+ud)
 
-      } else if input == "lr" {
-        w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
-        fmt.Fprintln(w, "T\tPrefix\tNext Hop\tCost")
-        stack.ForwardingTable.Mu.Lock()
-        
-        for _, route := range stack.ForwardingTable.Routes {
-            switch route.RoutingMode {
-            case 1:
-                fmt.Fprintln(w, "S\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + fmt.Sprint("-"))
-            case 2:
-                if route.Cost < 16 {
-                fmt.Fprintln(w, "R\t" + route.Prefix.String() + "\t" + route.VirtualIP.String() + "\t" + fmt.Sprint(route.Cost))
-                }
-            case 3:
-                fmt.Fprintln(w, "L\t" + route.Prefix.String() + "\tLOCAL:" + route.Iface.Name + "\t" + fmt.Sprint(route.Cost))
-            }
-            //change cost later
-        }
-        stack.ForwardingTable.Mu.Unlock()
-        w.Flush()
-      } else if strings.HasPrefix(input, "up") {
-        parts := strings.SplitN(input, " ", 2)
-        if len(parts) != 2 {
-            fmt.Println("Usage: up <ifname>")
-            continue
-        }
+				} // change UP later to have the actual state of interface
+			}
+			stack.ForwardingTable.Mu.Unlock()
+			w.Flush()
+		} else if input == "ln" {
+			w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
+			fmt.Fprintln(w, "Iface\tVIP\tUDPAddr")
+			for _, neighbor := range stack.Neighbors {
+				if stack.Interfaces[neighbor.InterfaceName].UpOrDown {
+					fmt.Fprintln(w, neighbor.InterfaceName+"\t"+neighbor.DestAddr.String()+"\t"+neighbor.UDPAddr.String())
+				}
+			}
+			w.Flush()
+		} else if strings.HasPrefix(input, "send") {
+			parts := strings.SplitN(input, " ", 3)
+			if len(parts) != 3 {
+				fmt.Println("Usage: send <addr> <message>")
+				continue
+			}
 
-        ifname := parts[1]
+			destAddr, err := netip.ParseAddr(parts[1])
+			if err != nil {
+				fmt.Printf("Invalid IP address: %v\n", err)
+				continue
+			}
+			messageBytes := []byte(parts[2])
 
-        if value, ok := stack.Interfaces[ifname]; ok {
-          value.UpOrDown = true
-          stack.Interfaces[ifname] = value
-        } 
+			table := stack.ForwardingTable
+			route, found, _ := table.MatchPrefix(destAddr)
+			if found == -1 {
+				fmt.Println("No matching prefix found")
+				continue
+			}
 
-      } else if strings.HasPrefix(input, "down") {
-        parts := strings.SplitN(input, " ", 2)
-        if len(parts) != 2 {
-            fmt.Println("Usage: down <ifname>")
-            continue
-        }
+			var srcIP netip.Addr
+			if route.RoutingMode == 4 {
+				srcIP = route.VirtualIP
+			} else {
+				iroute, _, _ := table.MatchPrefix(route.VirtualIP)
+				srcIP = iroute.VirtualIP
+			}
 
-        ifname := parts[1]
+			hdr := ipv4header.IPv4Header{
+				Version:  4,
+				Len:      20, // Header length is always 20 when no IP options
+				TOS:      0,
+				TotalLen: ipv4header.HeaderLen + len(messageBytes),
+				ID:       0,
+				Flags:    0,
+				FragOff:  0,
+				TTL:      32, // idk man
+				Protocol: 0,
+				Checksum: 0,     // Should be 0 until checksum is computed
+				Src:      srcIP, // double check
+				Dst:      destAddr,
+				Options:  []byte{},
+			}
+			iptcpstack.SendIP(stack, &hdr, messageBytes)
 
-        if value, ok := stack.Interfaces[ifname]; ok {
-         value.UpOrDown = false
-         stack.Interfaces[ifname] = value
-      } 
-      }
-     
-  }
+		} else if input == "lr" {
+			w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
+			fmt.Fprintln(w, "T\tPrefix\tNext Hop\tCost")
+			stack.ForwardingTable.Mu.Lock()
+
+			for _, route := range stack.ForwardingTable.Routes {
+				switch route.RoutingMode {
+				case 1:
+					fmt.Fprintln(w, "S\t"+route.Prefix.String()+"\t"+route.VirtualIP.String()+"\t"+fmt.Sprint("-"))
+				case 2:
+					if route.Cost < 16 {
+						fmt.Fprintln(w, "R\t"+route.Prefix.String()+"\t"+route.VirtualIP.String()+"\t"+fmt.Sprint(route.Cost))
+					}
+				case 3:
+					fmt.Fprintln(w, "L\t"+route.Prefix.String()+"\tLOCAL:"+route.Iface.Name+"\t"+fmt.Sprint(route.Cost))
+				}
+				//change cost later
+			}
+			stack.ForwardingTable.Mu.Unlock()
+			w.Flush()
+		} else if strings.HasPrefix(input, "up") {
+			parts := strings.SplitN(input, " ", 2)
+			if len(parts) != 2 {
+				fmt.Println("Usage: up <ifname>")
+				continue
+			}
+
+			ifname := parts[1]
+
+			if value, ok := stack.Interfaces[ifname]; ok {
+				value.UpOrDown = true
+				stack.Interfaces[ifname] = value
+			}
+
+		} else if strings.HasPrefix(input, "down") {
+			parts := strings.SplitN(input, " ", 2)
+			if len(parts) != 2 {
+				fmt.Println("Usage: down <ifname>")
+				continue
+			}
+
+			ifname := parts[1]
+
+			if value, ok := stack.Interfaces[ifname]; ok {
+				value.UpOrDown = false
+				stack.Interfaces[ifname] = value
+			}
+		} else if strings.HasPrefix(input, "c") {
+			parts := strings.SplitN(input, " ", 3)
+			if len(parts) != 3 {
+				fmt.Println("Usage: c <vip> <port>")
+				continue
+			}
+			vip, err := netip.ParseAddr(parts[1])
+			if err != nil {
+				fmt.Printf("Invalid IP address: %v\n", err)
+				continue
+			}
+			port := uint16(atoi(parts[2]))
+
+			socket.VConnect(vip, port, stack.TCPStack, stack)
+
+		}
+
+	}
 }
-

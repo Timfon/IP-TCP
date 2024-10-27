@@ -3,7 +3,7 @@ package iptcpstack
 import (
 	"IP-TCP/pkg/lnxconfig"
   "net/netip"
-	"IP-TCP/pkg/socket"
+  "IP-TCP/pkg/ipv4header"
   "IP-TCP/pkg/iptcp_utils"
   "fmt"
   "time"
@@ -101,7 +101,7 @@ func TCPPacketHandler(packet *Packet, args []interface{}){
       handleSynReceived(sock, packet, tcpHdr, stack)
     }
   case "SYN_SENT":
-    if tcHdr.Flags & header.TCPFlagSyn != 0 && tcpHdr.Flags & header.TCPFlagAck != 0 {
+    if tcpHdr.Flags & header.TCPFlagSyn != 0 && tcpHdr.Flags & header.TCPFlagAck != 0 {
       handleSynAckReceived(sock, packet, tcpHdr, stack)
     }
   case "SYN_RECEIVED":
@@ -112,7 +112,7 @@ func TCPPacketHandler(packet *Packet, args []interface{}){
     handleEstablished(sock, packet, tcpHdr, stack)
   }
 }
-func handleSynReceived(sock *Socket, packet *Packet, tcpHdr *header.TCPFields, stack *IPStack){
+func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
   //create a new socket
   sock.State = "SYN_RECEIVED"
 	sock.RemoteAddr = packet.Header.Src
@@ -131,27 +131,68 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr *header.TCPFields, s
 		WindowSize: sock.WindowSize,
 	}
 	// Create and send SYN-ACK packet
-	sendTCPPacket(sock, synAckHdr, nil, stack)
+	sendTCPPacket(sock, synAckHdr, stack, packet)
 }
 
-func sendTCPPacket(sock *Socket, tcpHdr header.TCPFields, data []byte, stack *IPStack){
+func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
+  sock.State = "ESTABLISHED"
+  sock.AckNum = tcpHdr.SeqNum + 1
 
+  // Send ACK
+  ackHdr := header.TCPFields{
+    SrcPort:    sock.LocalPort,
+    DstPort:    sock.RemotePort,
+    SeqNum:     sock.SeqNum,
+    AckNum:     sock.AckNum,
+    Flags:      header.TCPFlagAck,
+    WindowSize: sock.WindowSize,
+  }
+  // Create and send ACK packet
+  sendTCPPacket(sock, ackHdr, stack, packet)
+}
+
+func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
+  sock.State = "ESTABLISHED"
+  sock.AckNum = tcpHdr.SeqNum + 1
+}
+
+func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
+  // Send ACK
+  ackHdr := header.TCPFields{
+    SrcPort:    sock.LocalPort,
+    DstPort:    sock.RemotePort,
+    SeqNum:     sock.SeqNum,
+    AckNum:     sock.AckNum,
+    Flags:      header.TCPFlagAck,
+    WindowSize: sock.WindowSize,
+  }
+  // Create and send ACK packet
+  sendTCPPacket(sock, ackHdr, stack, packet)
+}
+
+func sendTCPPacket(sock *Socket, tcpHdr header.TCPFields, stack *IPStack, packet *Packet){
   // Create IP packet
+  
+  data := packet.Body //??data
  hdr := ipv4header.IPv4Header{
             Version:  4,
             Len: 	20, // Header length is always 20 when no IP options
             TOS:      0,
-            TotalLen: ipv4header.HeaderLen + len(messageBytes),
+            TotalLen: ipv4header.HeaderLen + len(data),//??data 
             ID:       0,
             Flags:    0,
             FragOff:  0,
             TTL:      32, // idk man
             Protocol: 0,
             Checksum: 0, // Should be 0 until checksum is computed
-            Src:      srcIP, // double check
-            Dst:      destAddr,
+            Src:      packet.Header.Src, // double check
+            Dst:      packet.Header.Dst, // double check
             Options:  []byte{},
         }
   // Send IP packet
-  SendIP(stack, &hdr, tcpPacket)
+  fmt.Println(data)
+  SendIP(stack, &hdr, data)
 }
+
+
+
