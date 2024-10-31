@@ -9,10 +9,11 @@ import (
 	"net/netip"
 	"os"
 	"strings"
+  "strconv"
 	"text/tabwriter"
 )
 
-func StartRepl(stack *iptcpstack.IPStack, hostOrRouter string) {
+func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrRouter string) {
 	reader := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print("> ")
@@ -154,11 +155,55 @@ func StartRepl(stack *iptcpstack.IPStack, hostOrRouter string) {
 				fmt.Printf("Invalid IP address: %v\n", err)
 				continue
 			}
-			port := uint16(atoi(parts[2]))
-
-			socket.VConnect(vip, port, stack.TCPStack, stack)
-
-		}
-
+      port, err := strconv.Atoi(parts[2])
+      if err != nil {
+        fmt.Printf("Invalid port number: %v\n", err)
+        continue
+      }
+			socket.VConnect(vip, uint16(port), tcpstack, stack)
+		} else if strings.HasPrefix(input, "a") {
+      parts := strings.SplitN(input, " ", 2)
+      if len(parts) != 2 {
+        fmt.Println("Usage: a <port>")
+        continue
+      }
+      port, err := strconv.Atoi(parts[1])
+      if err != nil {
+        fmt.Printf("Invalid port number: %v\n", err)
+        continue
+      }
+      ACommand(uint16(port), tcpstack)
+    } else if strings.HasPrefix(input, "ls") {
+      w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
+      fmt.Fprintln(w, "SID\tLAddr\tLPort\tRAddr\tRPort\tStatus")
+      for _, sock := range tcpstack.Sockets {
+        fmt.Fprintln(w, fmt.Sprintf("%d\t%s\t%d\t%s\t%d\t%s", sock.SID, sock.LocalAddr.String(), sock.LocalPort, sock.RemoteAddr.String(), sock.RemotePort, sock.State))
+      }
+      w.Flush()
+    }
 	}
+}
+
+func ACommand(port uint16, tcpstack *iptcpstack.TCPStack) {
+    // Create listening socket
+    listenConn, err := socket.VListen(port, tcpstack)
+    if err != nil {
+        fmt.Println(err)
+        return
+    }
+    // Start a goroutine to continuously accept connections
+    go func() {
+        for {
+            conn, err := listenConn.VAccept()
+            if err != nil {
+              // TODO: If the listener is closed, exit the goroutine
+                fmt.Println(err)
+                continue
+            }
+
+            // The connection is now established and ready for use by other REPL commands
+            // We don't need to do anything else with it here
+            fmt.Println(conn)
+        }
+    }()
 }

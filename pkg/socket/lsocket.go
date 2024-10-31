@@ -15,7 +15,7 @@ type VTCPListener struct {
 
 func VListen(port uint16, tcpStack *iptcpstack.TCPStack) (*VTCPListener, error){
   sock := &iptcpstack.Socket{
-    SID: tcpStack.NextSocketID,
+    SID: 0, // or should be next socket id?
     State: "LISTEN",
     LocalAddr: netip.IPv4Unspecified(),
     LocalPort: port,
@@ -45,6 +45,7 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error){
   }
 
   conn, ok := <-l.acceptQueue
+  fmt.Println(conn)
   if !ok {
     return nil, fmt.Errorf("Listener is closed")
   }

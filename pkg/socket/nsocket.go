@@ -20,6 +20,7 @@ func VConnect(addr netip.Addr, port uint16, tcpStack *iptcpstack.TCPStack, ipSta
   if found == -1 {
     return nil, fmt.Errorf("no route to host %v", addr)
   }
+  //fmt.Println(route)
 
   // Get the local source IP based on the route
   var localAddr netip.Addr

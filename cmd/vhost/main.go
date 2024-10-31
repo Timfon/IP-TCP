@@ -43,7 +43,7 @@ func main() {
     }
   }
 
-  go repl.StartRepl(ip_stack, "host")
+  go repl.StartRepl(ip_stack, tcp_stack, "host")
   select{}
 }
 

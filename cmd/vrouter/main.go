@@ -34,7 +34,7 @@ func main() {
   stack.RegisterRecvHandler(200, rippacket.RipPacketHandler)
   stack.RegisterRecvHandler(6, iptcpstack.TCPPacketHandler)
 
-  go repl.StartRepl(stack, "router")
+  go repl.StartRepl(stack, tcp_stack, "router")
 
   for _, routes := range stack.ForwardingTable.Routes{
 	go iptcpstack.ReceiveIP(routes, stack, tcp_stack)
