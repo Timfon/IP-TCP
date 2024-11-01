@@ -76,15 +76,15 @@ func TCPPacketHandler(packet *Packet, args []interface{}){
   tcpHeaderAndData := buffer[hdr.Len:hdr.TotalLen]
   tcpHdr := iptcp_utils.ParseTCPHeader(tcpHeaderAndData)
 
-  tcpPayload := tcpHeaderAndData[tcpHdr.DataOffset:]
-  tcpChecksumFromHeader := tcpHdr.Checksum
-  tcpHdr.Checksum = 0
-  tcpComputedChecksum := iptcp_utils.ComputeTCPChecksum(&tcpHdr, hdr.Src, hdr.Dst, tcpPayload)
-  if tcpComputedChecksum != tcpChecksumFromHeader {
-    fmt.Println("Checksums do not match, dropping packet")
-    fmt.Print("> ")
-    return
-  }
+  // tcpPayload := tcpHeaderAndData[tcpHdr.DataOffset:]
+  // tcpChecksumFromHeader := tcpHdr.Checksum
+  // tcpHdr.Checksum = 0
+  // tcpComputedChecksum := iptcp_utils.ComputeTCPChecksum(&tcpHdr, hdr.Src, hdr.Dst, tcpPayload)
+  // if tcpComputedChecksum != tcpChecksumFromHeader {
+  //   fmt.Println("Checksums do not match, dropping packet")
+  //   fmt.Print("> ")
+  //   return
+  // }
 
   //find the socket
   sock := tcpStack.FindSocket(hdr.Dst, tcpHdr.DstPort, hdr.Src, tcpHdr.SrcPort)
