@@ -37,7 +37,7 @@ func VConnect(addr netip.Addr, port uint16, tcpStack *iptcpstack.TCPStack, ipSta
     localPort := uint16(20000 + tcpStack.NextSocketID)
     sock := &iptcpstack.Socket{
         SID:        tcpStack.NextSocketID,
-        State:      "SYN_SENT",
+        State:      1,
         LocalAddr:  localAddr,
         LocalPort:  localPort,
         RemoteAddr: addr,
@@ -65,8 +65,10 @@ func VConnect(addr netip.Addr, port uint16, tcpStack *iptcpstack.TCPStack, ipSta
     checksum := iptcp_utils.ComputeTCPChecksum(&synHdr, localAddr, addr, nil)
     synHdr.Checksum = checksum
     tcpHeaderBytes := make(header.TCP, iptcp_utils.TcpHeaderLen)
+    //fmt.Println(tcpHeaderBytes)
     tcp := header.TCP(tcpHeaderBytes)
     tcp.Encode(&synHdr)
+    fmt.Println(tcpHeaderBytes)
 
     ipPacketPayload := make([]byte, 0, len(tcpHeaderBytes))
     ipPacketPayload = append(ipPacketPayload, tcpHeaderBytes...)

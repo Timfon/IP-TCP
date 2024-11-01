@@ -309,6 +309,8 @@ func ReceiveIP(route Route, stack *IPStack, tcpstack *TCPStack) (*Packet, *net.U
 		// the value stored in the header.
 		// See ValudateChecksum for details.
 		headerBytes := buffer[:headerSize]
+
+		
 		checksumFromHeader := uint16(hdr.Checksum)
 
 		message := buffer[headerSize:n]

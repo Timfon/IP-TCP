@@ -23,6 +23,8 @@ const (
 // examples.  Your mileage may vary!
 func ParseTCPHeader(b []byte) header.TCPFields {
 	td := header.TCP(b)
+	fmt.Println(td)
+	fmt.Println("hi")
 	return header.TCPFields{
 		SrcPort:    td.SourcePort(),
 		DstPort:    td.DestinationPort(),

@@ -9,6 +9,17 @@ import (
   "time"
   "github.com/google/netstack/tcpip/header"
 )
+
+type SocketStatus int
+
+const (
+  Listening SocketStatus = 0
+  SynSent SocketStatus = 1
+  SynReceived = 2
+  Established = 3
+
+)
+
 type TCPStack struct {
   TcpRtoMin time.Duration
   TcpRtoMax time.Duration
@@ -19,7 +30,7 @@ type TCPStack struct {
 
 type Socket struct {
   SID int
-  State string
+  State SocketStatus
   LocalAddr netip.Addr
   LocalPort uint16  
   RemoteAddr netip.Addr
@@ -43,7 +54,7 @@ func InitializeTCP(config *lnxconfig.IPConfig) (*TCPStack, error){
 
 func (stack *TCPStack) FindSocket(localAddr netip.Addr, localPort uint16, remoteAddr netip.Addr, remotePort uint16) *Socket{
   for _, sock := range stack.Sockets {
-    if sock.State == "ESTABLISHED" &&
+    if sock.State == 3 &&
     sock.LocalAddr == localAddr &&
     sock.LocalPort == localPort &&
     sock.RemoteAddr == remoteAddr &&
@@ -54,7 +65,7 @@ func (stack *TCPStack) FindSocket(localAddr netip.Addr, localPort uint16, remote
 
   //trye listening ports now
   for _, sock := range stack.Sockets {
-    if sock.State == "LISTEN" &&
+    if sock.State == 0 &&
     sock.LocalPort == localPort {
       return sock
     }
@@ -72,10 +83,10 @@ func TCPPacketHandler(packet *Packet, args []interface{}){
 
   hdr := packet.Header
 
-  buffer := make([]byte, MAX_MESSAGE_SIZE) // max message size
-  tcpHeaderAndData := buffer[hdr.Len:hdr.TotalLen]
-  tcpHdr := iptcp_utils.ParseTCPHeader(tcpHeaderAndData)
 
+  tcpHdr := iptcp_utils.ParseTCPHeader(packet.Body)
+
+  fmt.Println(tcpHdr)
   // tcpPayload := tcpHeaderAndData[tcpHdr.DataOffset:]
   // tcpChecksumFromHeader := tcpHdr.Checksum
   // tcpHdr.Checksum = 0
@@ -86,7 +97,6 @@ func TCPPacketHandler(packet *Packet, args []interface{}){
   //   return
   // }
 
-  //find the socket
   sock := tcpStack.FindSocket(hdr.Dst, tcpHdr.DstPort, hdr.Src, tcpHdr.SrcPort)
   if sock == nil {
     fmt.Println("No matching socket found, dropping packet")
@@ -96,26 +106,26 @@ func TCPPacketHandler(packet *Packet, args []interface{}){
 
   //handle the packet
   switch sock.State {
-  case "LISTEN":
+  case 0:
     //check if it is a SYN packet
     if tcpHdr.Flags & header.TCPFlagSyn != 0 {
       handleSynReceived(sock, packet, tcpHdr, stack)
     }
-  case "SYN_SENT":
+  case 1:
     if tcpHdr.Flags & header.TCPFlagSyn != 0 && tcpHdr.Flags & header.TCPFlagAck != 0 {
       handleSynAckReceived(sock, packet, tcpHdr, stack)
     }
-  case "SYN_RECEIVED":
+  case 2:
     if tcpHdr.Flags & header.TCPFlagAck != 0 {
       handleAckReceived(sock, packet, tcpHdr, stack)
     }
-  case "ESTABLISHED":
+  case 3:
     handleEstablished(sock, packet, tcpHdr, stack)
   }
 }
 func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
   //create a new socket
-  sock.State = "SYN_RECEIVED"
+  sock.State = 2
 	sock.RemoteAddr = packet.Header.Src
 	sock.RemotePort = tcpHdr.SrcPort
 	sock.AckNum = tcpHdr.SeqNum + 1
@@ -136,7 +146,7 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 }
 
 func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
-  sock.State = "ESTABLISHED"
+  sock.State = 3
   sock.AckNum = tcpHdr.SeqNum + 1
 
   // Send ACK
@@ -153,7 +163,7 @@ func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields,
 }
 
 func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
-  sock.State = "ESTABLISHED"
+  sock.State = 3
   sock.AckNum = tcpHdr.SeqNum + 1
 }
 
