@@ -56,9 +56,10 @@ func VConnect(addr netip.Addr, port uint16, tcpStack *iptcpstack.TCPStack, ipSta
         DstPort:    sock.RemotePort,
         SeqNum:     sock.SeqNum,
         AckNum:     0,
+        DataOffset: 20, // TCP header size in bytes
         Flags:      header.TCPFlagSyn,
         WindowSize: sock.WindowSize,
-        DataOffset: 20, // TCP header size in bytes
+        //checksum
     }
 
     // Create TCP header bytes
@@ -68,11 +69,9 @@ func VConnect(addr netip.Addr, port uint16, tcpStack *iptcpstack.TCPStack, ipSta
     //fmt.Println(tcpHeaderBytes)
     tcp := header.TCP(tcpHeaderBytes)
     tcp.Encode(&synHdr)
-    fmt.Println(tcpHeaderBytes)
 
     ipPacketPayload := make([]byte, 0, len(tcpHeaderBytes))
     ipPacketPayload = append(ipPacketPayload, tcpHeaderBytes...)
-    //ipPacketPayload = append(ipPacketPayload, []byte(payload)...) // we have no payload for now
     // Send the packet
     ipHdr := ipv4header.IPv4Header{
       Version:  4,
