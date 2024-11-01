@@ -4,6 +4,9 @@ import (
 	"net/netip"
   "fmt"
   "IP-TCP/pkg/iptcpstack"
+  "IP-TCP/pkg/ipv4header"
+  "IP-TCP/pkg/iptcp_utils"
+	"github.com/google/netstack/tcpip/header"
   "time"
 )
 
@@ -14,48 +17,91 @@ type VTCPConn struct {
   closed bool
 }
 
-func VConnect(addr netip.Addr, port uint16, tcpStack *iptcpstack.TCPStack, ipStack *iptcpstack.IPStack) (*VTCPConn, error){
-  //jank way to get the local route
-  route, found, _ := ipStack.ForwardingTable.MatchPrefix(addr)
-  if found == -1 {
-    return nil, fmt.Errorf("no route to host %v", addr)
-  }
-  //fmt.Println(route)
+func VConnect(addr netip.Addr, port uint16, tcpStack *iptcpstack.TCPStack, ipStack *iptcpstack.IPStack) (*VTCPConn, error) {
+    // Find route to destination
+    route, found, _ := ipStack.ForwardingTable.MatchPrefix(addr)
+    if found == -1 {
+        return nil, fmt.Errorf("no route to host %v", addr)
+    }
 
-  // Get the local source IP based on the route
-  var localAddr netip.Addr
-  if route.RoutingMode == 4 {
-    localAddr = route.VirtualIP
-  } else {
-    // If route is through interface, get the interface's IP
-    iroute, _, _ := ipStack.ForwardingTable.MatchPrefix(route.VirtualIP)
-    localAddr = iroute.VirtualIP
-  }
-  localPort := uint16(20000 + tcpStack.NextSocketID)
+    // Get local source IP based on route
+    var localAddr netip.Addr
+    if route.RoutingMode == 4 {
+        localAddr = route.VirtualIP
+    } else {
+        iroute, _, _ := ipStack.ForwardingTable.MatchPrefix(route.VirtualIP)
+        localAddr = iroute.VirtualIP
+    }
 
-  sock := &iptcpstack.Socket{
-    SID: tcpStack.NextSocketID,
-    State: "SYN_SENT",
-    LocalAddr: localAddr,
-    LocalPort: localPort,
-    RemoteAddr: addr,
-    RemotePort: port,
-    SeqNum: uint32(time.Now().UnixNano()),
-    AckNum: 0,
-    WindowSize: 65535,
-    SendWindow:  make([]byte, 0),
-  }
+    // Create new socket
+    localPort := uint16(20000 + tcpStack.NextSocketID)
+    sock := &iptcpstack.Socket{
+        SID:        tcpStack.NextSocketID,
+        State:      "SYN_SENT",
+        LocalAddr:  localAddr,
+        LocalPort:  localPort,
+        RemoteAddr: addr,
+        RemotePort: port,
+        SeqNum:     uint32(time.Now().UnixNano()),
+        AckNum:     0,
+        WindowSize: 65535,
+        SendWindow: make([]byte, 0),
+    }
+    tcpStack.NextSocketID++
+    //tcpStack.Sockets[sock.SID] = sock //I don't think we should be adding synsent to the sockettable
 
-  tcpStack.NextSocketID++
-  tcpStack.Sockets[sock.SID] = sock
-  conn := &VTCPConn{
-    socket: sock,
-    tcpStack: tcpStack,
-    readBuffer: make([]byte, 0),
-    closed: false,
-  }
+    // Create and send SYN packet
+    synHdr := header.TCPFields{
+        SrcPort:    sock.LocalPort,
+        DstPort:    sock.RemotePort,
+        SeqNum:     sock.SeqNum,
+        AckNum:     0,
+        Flags:      header.TCPFlagSyn,
+        WindowSize: sock.WindowSize,
+        DataOffset: 20, // TCP header size in bytes
+    }
 
-  return conn, nil
+    // Create TCP header bytes
+    checksum := iptcp_utils.ComputeTCPChecksum(&synHdr, localAddr, addr, nil)
+    synHdr.Checksum = checksum
+    tcpHeaderBytes := make(header.TCP, iptcp_utils.TcpHeaderLen)
+    tcp := header.TCP(tcpHeaderBytes)
+    tcp.Encode(&synHdr)
+
+    ipPacketPayload := make([]byte, 0, len(tcpHeaderBytes))
+    ipPacketPayload = append(ipPacketPayload, tcpHeaderBytes...)
+    //ipPacketPayload = append(ipPacketPayload, []byte(payload)...) // we have no payload for now
+    // Send the packet
+    ipHdr := ipv4header.IPv4Header{
+      Version:  4,
+            Len: 	20, // Header length is always 20 when no IP options
+            TOS:      0,
+            TotalLen: ipv4header.HeaderLen + len(tcpHeaderBytes),//??data 
+            ID:       0,
+            Flags:    0,
+            FragOff:  0,
+            TTL:      32, // idk man
+            Protocol: 6,
+            Checksum: 0, 
+            Src:      localAddr,
+            Dst:      addr,
+            Options:  []byte{},
+    }
+    fmt.Println(ipHdr)
+
+    err := iptcpstack.SendIP(ipStack, &ipHdr, tcpHeaderBytes)
+    if err != nil {
+        return nil, fmt.Errorf("failed to send SYN packet: %v", err)
+    }
+    // Create connection object
+    conn := &VTCPConn{
+        socket:     sock,
+        tcpStack:   tcpStack,
+        readBuffer: make([]byte, 0),
+        closed:     false,
+    }
+
+    return conn, nil
 }
 
 

@@ -160,7 +160,11 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         fmt.Printf("Invalid port number: %v\n", err)
         continue
       }
-			socket.VConnect(vip, uint16(port), tcpstack, stack)
+      _ , err = socket.VConnect(vip, uint16(port), tcpstack, stack)
+      if err != nil {
+        fmt.Println(err)
+        continue
+      }
 		} else if strings.HasPrefix(input, "a") {
       parts := strings.SplitN(input, " ", 2)
       if len(parts) != 2 {
@@ -200,9 +204,9 @@ func ACommand(port uint16, tcpstack *iptcpstack.TCPStack) {
                 fmt.Println(err)
                 continue
             }
-
             // The connection is now established and ready for use by other REPL commands
             // We don't need to do anything else with it here
+            listenConn.AcceptQueue <- conn
             fmt.Println(conn)
         }
     }()

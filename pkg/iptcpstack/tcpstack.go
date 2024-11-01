@@ -68,6 +68,7 @@ func TCPPacketHandler(packet *Packet, args []interface{}){
   //then parse TCP
   stack := args[0].(*IPStack)
   tcpStack := args[1].(*TCPStack)
+  fmt.Println("TCP Packet received")
 
   hdr := packet.Header
 

@@ -7,10 +7,10 @@ import (
 )
 
 type VTCPListener struct {
-  socket *iptcpstack.Socket
-  tcpStack *iptcpstack.TCPStack
-  acceptQueue chan *VTCPConn
-  closed bool
+  Socket *iptcpstack.Socket
+  TcpStack *iptcpstack.TCPStack
+  AcceptQueue chan *VTCPConn
+  Closed bool
 }
 
 func VListen(port uint16, tcpStack *iptcpstack.TCPStack) (*VTCPListener, error){
@@ -30,21 +30,21 @@ func VListen(port uint16, tcpStack *iptcpstack.TCPStack) (*VTCPListener, error){
   tcpStack.Sockets[sock.SID] = sock
 
   listener := &VTCPListener{
-    socket: sock,
-    tcpStack: tcpStack,
-    acceptQueue: make(chan *VTCPConn, 100), //buffer of 100 pending connections idk
-    closed: false,
+    Socket: sock,
+    TcpStack: tcpStack,
+    AcceptQueue: make(chan *VTCPConn, 100), //buffer of 100 pending connections idk
+    Closed: false,
   }
   return listener, nil
 }
 
 
 func (l *VTCPListener) VAccept() (*VTCPConn, error){
-  if l.closed {
+  if l.Closed {
     return nil, fmt.Errorf("Listener is closed")
   }
 
-  conn, ok := <-l.acceptQueue
+  conn, ok := <-l.AcceptQueue
   fmt.Println(conn)
   if !ok {
     return nil, fmt.Errorf("Listener is closed")
@@ -54,12 +54,12 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error){
 }
 
 func (l *VTCPListener) VClose() error {
-  if l.closed {
+  if l.Closed {
     return fmt.Errorf("Listener is already closed")
   }
 
-  l.closed = true
-  close(l.acceptQueue)
-  delete(l.tcpStack.Sockets, l.socket.SID)
+  l.Closed = true
+  close(l.AcceptQueue)
+  delete(l.TcpStack.Sockets, l.Socket.SID)
   return nil
 }
