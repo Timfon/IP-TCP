@@ -15,7 +15,7 @@ type VTCPListener struct {
 
 func VListen(port uint16, tcpStack *iptcpstack.TCPStack) (*VTCPListener, error){
   sock := &iptcpstack.Socket{
-    SID: 0, // or should be next socket id?
+    SID: tcpStack.NextSocketID, // or should be next socket id?
     State: 0,
     LocalAddr: netip.IPv4Unspecified(),
     LocalPort: port,

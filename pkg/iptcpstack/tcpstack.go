@@ -52,8 +52,7 @@ func InitializeTCP(config *lnxconfig.IPConfig) (*TCPStack, error){
 
 func (stack *TCPStack) FindSocket(localAddr netip.Addr, localPort uint16, remoteAddr netip.Addr, remotePort uint16) *Socket{
   for _, sock := range stack.Sockets {
-    if sock.State == 3 &&
-    sock.LocalAddr == localAddr &&
+    if sock.LocalAddr == localAddr &&
     sock.LocalPort == localPort &&
     sock.RemoteAddr == remoteAddr &&
     sock.RemotePort == remotePort {
@@ -82,15 +81,7 @@ func TCPPacketHandler(packet *Packet, args []interface{}){
 
   tcpHdr := iptcp_utils.ParseTCPHeader(packet.Body)
 
-  // tcpPayload := tcpHeaderAndData[tcpHdr.DataOffset:]
-  // tcpChecksumFromHeader := tcpHdr.Checksum
-  // tcpHdr.Checksum = 0
-  // tcpComputedChecksum := iptcp_utils.ComputeTCPChecksum(&tcpHdr, hdr.Src, hdr.Dst, tcpPayload)
-  // if tcpComputedChecksum != tcpChecksumFromHeader {
-  //   fmt.Println("Checksums do not match, dropping packet")
-  //   fmt.Print("> ")
-  //   return
-  // }
+  fmt.Println(tcpHdr)
 
   sock := tcpStack.FindSocket(hdr.Dst, tcpHdr.DstPort, hdr.Src, tcpHdr.SrcPort)
   if sock == nil {
@@ -132,16 +123,19 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
       WindowSize: 65535,
       SendWindow: make([]byte, 0),
     }
+    fmt.Println(sock)
     // Create SYN-ACK header
     synAckHdr := header.TCPFields{
         SrcPort:    sock.LocalPort,
-        DstPort:    sock.RemotePort,
+        DstPort:    tcpHdr.SrcPort,
         SeqNum:     sock.SeqNum,
         AckNum:     sock.AckNum,
         DataOffset: 20,  // TCP header size in bytes
         Flags:      header.TCPFlagSyn | header.TCPFlagAck,
         WindowSize: sock.WindowSize,
     }
+
+    fmt.Println(synAckHdr)
 
     // Create TCP header bytes and compute checksum
     checksum := iptcp_utils.ComputeTCPChecksum(&synAckHdr, sock.LocalAddr, sock.RemoteAddr, nil)
@@ -175,7 +169,7 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
     return nil
 }
 
-func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
+func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) error{
   sock.State = 3
   sock.AckNum = tcpHdr.SeqNum + 1
   fmt.Println("SYN-ACK received, connection established")
@@ -189,11 +183,35 @@ func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields,
     Flags:      header.TCPFlagAck,
     WindowSize: sock.WindowSize,
   }
-  // Create and send ACK packet
-  sendTCPPacket(sock, ackHdr, stack, packet)
+  tcpHeaderBytes := make(header.TCP, iptcp_utils.TcpHeaderLen)
+  tcp := header.TCP(tcpHeaderBytes)
+  tcp.Encode(&ackHdr)
+
+  // Create IP header
+  ipHdr := ipv4header.IPv4Header{
+      Version:  4,
+      Len:      20,
+      TOS:      0,
+      TotalLen: ipv4header.HeaderLen + len(tcpHeaderBytes),
+      ID:       0,
+      Flags:    0,
+      FragOff:  0,
+      TTL:      packet.Header.TTL,
+      Protocol: 6,  // TCP protocol number
+      Checksum: 0,
+      Src:      packet.Header.Dst,
+      Dst:      packet.Header.Src,
+      Options:  []byte{},
+  }
+  err := SendIP(stack, &ipHdr, tcpHeaderBytes)
+  if err != nil {
+      return fmt.Errorf("failed to send SYN-ACK packet: %v", err)
+  }
+  return nil
 }
 
 func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
+  fmt.Println("ACK received, connection established")
   sock.State = 3
   sock.AckNum = tcpHdr.SeqNum + 1
 }
@@ -232,7 +250,7 @@ func sendTCPPacket(sock *Socket, tcpHdr header.TCPFields, stack *IPStack, packet
             Options:  []byte{},
         }
   // Send IP packet
-  fmt.Println(data)
+  //fmt.Println(data)
   SendIP(stack, &hdr, data)
 }
 

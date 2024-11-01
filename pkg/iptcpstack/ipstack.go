@@ -246,7 +246,6 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) error {
 	headerBytes, err := header.Marshal()
 
 	header.Checksum = int(ComputeChecksum(headerBytes))
-  fmt.Println(header.Checksum)
 	if err != nil {
 		log.Fatalln("Error marshalling header:  ", err)
 	}
@@ -291,7 +290,6 @@ func ReceiveIP(route Route, stack *IPStack, tcpstack *TCPStack) (*Packet, *net.U
 		// NOTE:  This does not validate the checksum or check any fields
 		// (You'll need to do this part yourself)
 		hdr, err := ipv4header.ParseHeader(buffer)
-    fmt.Println(hdr)
 		hdr.TTL = hdr.TTL - 1
 
 		if err != nil {
@@ -302,7 +300,6 @@ func ReceiveIP(route Route, stack *IPStack, tcpstack *TCPStack) (*Packet, *net.U
 			continue
 		}
 		headerSize := hdr.Len
-    fmt.Println(hdr)
 
 		// Validate the checksum
 		// The checksum is correct if the value we computed matches
@@ -321,7 +318,6 @@ func ReceiveIP(route Route, stack *IPStack, tcpstack *TCPStack) (*Packet, *net.U
 
 		hdr.Checksum = 0
 		computedChecksum := ValidateChecksum(headerBytes, checksumFromHeader)
-    fmt.Println(computedChecksum, checksumFromHeader)
 		if computedChecksum != checksumFromHeader {
 			fmt.Println("Checksums do not match, dropping packet")
 			fmt.Print("> ")

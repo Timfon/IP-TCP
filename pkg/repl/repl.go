@@ -181,7 +181,16 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
       w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
       fmt.Fprintln(w, "SID\tLAddr\tLPort\tRAddr\tRPort\tStatus")
       for _, sock := range tcpstack.Sockets {
-        fmt.Fprintln(w, fmt.Sprintf("%d\t%s\t%d\t%s\t%d\t%s", sock.SID, sock.LocalAddr.String(), sock.LocalPort, sock.RemoteAddr.String(), sock.RemotePort, sock.State))
+		
+		var sockState string
+		
+		switch sock.State {
+		case 0 : sockState = "LISTEN"
+		case 1 : sockState = "SYN-SENT"
+		case 2 : sockState = "SYN-RECEIVED"
+		case 3 : sockState = "ESTABLISHED"
+		}
+        fmt.Fprintln(w, fmt.Sprintf("%d\t%s\t%d\t%s\t%d\t%s", sock.SID, sock.LocalAddr.String(), sock.LocalPort, sock.RemoteAddr.String(), sock.RemotePort, sockState))
       }
       w.Flush()
     }

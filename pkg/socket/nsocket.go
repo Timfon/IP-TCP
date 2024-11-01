@@ -8,6 +8,7 @@ import (
   "IP-TCP/pkg/iptcp_utils"
 	"github.com/google/netstack/tcpip/header"
   "time"
+  "math/rand"
 )
 
 type VTCPConn struct {
@@ -34,7 +35,7 @@ func VConnect(addr netip.Addr, port uint16, tcpStack *iptcpstack.TCPStack, ipSta
     }
 
     // Create new socket
-    localPort := uint16(20000 + tcpStack.NextSocketID)
+    localPort := uint16(rand.Uint32() >> 16)
     sock := &iptcpstack.Socket{
         SID:        tcpStack.NextSocketID,
         State:      1,
@@ -49,7 +50,7 @@ func VConnect(addr netip.Addr, port uint16, tcpStack *iptcpstack.TCPStack, ipSta
     }
     tcpStack.NextSocketID++
     //tcpStack.Sockets[sock.SID] = sock //I don't think we should be adding synsent to the sockettable
-
+    tcpStack.Sockets[sock.SID] = sock
     // Create and send SYN packet
     synHdr := header.TCPFields{
         SrcPort:    sock.LocalPort,
