@@ -10,34 +10,11 @@ import (
   "github.com/google/netstack/tcpip/header"
 )
 
-type SocketStatus int
-
-const (
-  Listening SocketStatus = 0
-  SynSent SocketStatus = 1
-  SynReceived = 2
-  Established = 3
-)
-
 type TCPStack struct {
   TcpRtoMin time.Duration
   TcpRtoMax time.Duration
   Sockets map[int]*Socket
   NextSocketID int
-}
-
-
-type Socket struct {
-  SID int
-  State SocketStatus
-  LocalAddr netip.Addr
-  LocalPort uint16  
-  RemoteAddr netip.Addr
-  RemotePort uint16
-  SeqNum  uint32
-  AckNum  uint32
-  WindowSize uint16
-  SendWindow []byte
 }
 
 func InitializeTCP(config *lnxconfig.IPConfig) (*TCPStack, error){
@@ -125,25 +102,6 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
     }
     fmt.Println(sock)
     // Create SYN-ACK header
-    synAckHdr := header.TCPFields{
-        SrcPort:    sock.LocalPort,
-        DstPort:    tcpHdr.SrcPort,
-        SeqNum:     sock.SeqNum,
-        AckNum:     sock.AckNum,
-        DataOffset: 20,  // TCP header size in bytes
-        Flags:      header.TCPFlagSyn | header.TCPFlagAck,
-        WindowSize: sock.WindowSize,
-    }
-
-    fmt.Println(synAckHdr)
-
-    // Create TCP header bytes and compute checksum
-    checksum := iptcp_utils.ComputeTCPChecksum(&synAckHdr, sock.LocalAddr, sock.RemoteAddr, nil)
-    synAckHdr.Checksum = checksum
-    
-    tcpHeaderBytes := make(header.TCP, iptcp_utils.TcpHeaderLen)
-    tcp := header.TCP(tcpHeaderBytes)
-    tcp.Encode(&synAckHdr)
 
     // Create IP header
     ipHdr := ipv4header.IPv4Header{
@@ -230,15 +188,32 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
   sendTCPPacket(sock, ackHdr, stack, packet)
 }
 
-func sendTCPPacket(sock *Socket, tcpHdr header.TCPFields, stack *IPStack, packet *Packet){
+func (stack *IPStack) sendTCPPacket(sock *Socket, packet *Packet, flags uint8){
   // Create IP packet
   
   data := packet.Body //??data
- hdr := ipv4header.IPv4Header{
+  tcpHdr := header.TCPFields{
+    SrcPort:    sock.LocalPort,
+    DstPort:    tcpHdr.remotePort,
+    SeqNum:     sock.SeqNum,
+    AckNum:     sock.AckNum,
+    DataOffset: 20,  // TCP header size in bytes
+    Flags:      flags,
+    WindowSize: sock.WindowSize,
+}
+
+// Create TCP header bytes and compute checksum
+  checksum := iptcp_utils.ComputeTCPChecksum(&synAckHdr, sock.LocalAddr, sock.RemoteAddr, nil)
+  tcpHdr.Checksum = checksum
+
+  tcpHeaderBytes := make(header.TCP, iptcp_utils.TcpHeaderLen)
+  tcp := header.TCP(tcpHeaderBytes)
+  tcp.Encode(&tcpHdr)
+  hdr := ipv4header.IPv4Header{
             Version:  4,
             Len: 	20, // Header length is always 20 when no IP options
             TOS:      0,
-            TotalLen: ipv4header.HeaderLen + len(data),//??data 
+            TotalLen: ipv4header.HeaderLen + len(tcp),//??data 
             ID:       0,
             Flags:    0,
             FragOff:  0,
@@ -249,9 +224,11 @@ func sendTCPPacket(sock *Socket, tcpHdr header.TCPFields, stack *IPStack, packet
             Dst:      packet.Header.Dst, // double check
             Options:  []byte{},
         }
+
+  
   // Send IP packet
   //fmt.Println(data)
-  SendIP(stack, &hdr, data)
+  SendIP(stack, &hdr, tcp)
 }
 
 

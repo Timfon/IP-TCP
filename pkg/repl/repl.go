@@ -160,7 +160,7 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         fmt.Printf("Invalid port number: %v\n", err)
         continue
       }
-      _ , err = socket.VConnect(vip, uint16(port), tcpstack, stack)
+      _ , err = tcpstack.VConnect(vip, uint16(port), stack)
       if err != nil {
         fmt.Println(err)
         continue

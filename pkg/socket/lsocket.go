@@ -8,36 +8,9 @@ import (
 
 type VTCPListener struct {
   Socket *iptcpstack.Socket
-  TcpStack *iptcpstack.TCPStack
   AcceptQueue chan *VTCPConn
   Closed bool
 }
-
-func VListen(port uint16, tcpStack *iptcpstack.TCPStack) (*VTCPListener, error){
-  sock := &iptcpstack.Socket{
-    SID: tcpStack.NextSocketID, // or should be next socket id?
-    State: 0,
-    LocalAddr: netip.IPv4Unspecified(),
-    LocalPort: port,
-    RemoteAddr: netip.IPv4Unspecified(),
-    RemotePort: 0,
-    SeqNum: 0,
-    AckNum: 0,
-    WindowSize: 65535, // maybe change later??
-    SendWindow: make([]byte, 0), // maybe empty window, growing. 
-  }
-  tcpStack.NextSocketID++
-  tcpStack.Sockets[sock.SID] = sock
-
-  listener := &VTCPListener{
-    Socket: sock,
-    TcpStack: tcpStack,
-    AcceptQueue: make(chan *VTCPConn, 100), //buffer of 100 pending connections idk
-    Closed: false,
-  }
-  return listener, nil
-}
-
 
 func (l *VTCPListener) VAccept() (*VTCPConn, error){
   if l.Closed {
