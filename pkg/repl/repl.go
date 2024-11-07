@@ -3,7 +3,6 @@ package repl
 import (
 	"IP-TCP/pkg/iptcpstack"
 	"IP-TCP/pkg/ipv4header"
-	"IP-TCP/pkg/socket"
 	"bufio"
 	"fmt"
 	"net/netip"
