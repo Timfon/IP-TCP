@@ -27,25 +27,25 @@ func InitializeTCP(config *lnxconfig.IPConfig) (*TCPStack, error){
   return TcpStack, nil
 }
 
-func (stack *TCPStack) FindSocket(localAddr netip.Addr, localPort uint16, remoteAddr netip.Addr, remotePort uint16) *Socket{
-  for _, sock := range stack.Sockets {
-    conn := sock.Conn
-    if conn.LocalAddr == localAddr &&
-    conn.LocalPort == localPort &&
-    conn.RemoteAddr == remoteAddr &&
-    conn.RemotePort == remotePort {
-      return sock
+func (stack *TCPStack) FindSocket(localAddr netip.Addr, localPort uint16, remoteAddr netip.Addr, remotePort uint16) *Socket {
+    // First check listening sockets
+    for _, sock := range stack.Sockets {
+        if sock.Listen != nil && sock.Listen.LocalPort == localPort {
+            return sock
+        }
     }
-  }
 
-  //trye listening ports now
-  for _, sock := range stack.Sockets {
-    l := sock.Listen
-    if l.LocalPort == localPort {
-      return sock
+    // Then check connected sockets
+    for _, sock := range stack.Sockets {
+        if sock.Conn != nil && 
+           sock.Conn.LocalAddr == localAddr &&
+           sock.Conn.LocalPort == localPort &&
+           sock.Conn.RemoteAddr == remoteAddr &&
+           sock.Conn.RemotePort == remotePort {
+            return sock
+        }
     }
-  }
-  return nil
+    return nil
 }
 
 func TCPPacketHandler(packet *Packet, args []interface{}){
@@ -59,8 +59,6 @@ func TCPPacketHandler(packet *Packet, args []interface{}){
 
   tcpHdr := iptcp_utils.ParseTCPHeader(packet.Body)
 
-  fmt.Println(tcpHdr)
-
   sock := tcpStack.FindSocket(hdr.Dst, tcpHdr.DstPort, hdr.Src, tcpHdr.SrcPort)
   if sock == nil {
     fmt.Println("No matching socket found, dropping packet")
@@ -72,6 +70,7 @@ func TCPPacketHandler(packet *Packet, args []interface{}){
     if tcpHdr.Flags & header.TCPFlagSyn != 0 {
       handleSynReceived(sock, packet, tcpHdr, stack, tcpStack)
     }   
+    return
   }
 
   //handle the packet
@@ -90,8 +89,16 @@ func TCPPacketHandler(packet *Packet, args []interface{}){
 }
 
 func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack, tcpstack *TCPStack) error {
+    //store previous packet data
+    sock.Listen.SrcAddr = packet.Header.Src
+    sock.Listen.DstAddr = packet.Header.Dst
+    sock.Listen.SrcPort = tcpHdr.SrcPort
+    sock.Listen.SeqNum = tcpHdr.SeqNum
+
     //add new socket to socket table
     l := sock.Listen
+
+
     new_Connection := &VTCPConn{
       State: 2,
       LocalAddr: packet.Header.Dst,
@@ -162,51 +169,67 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
   stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
 }
 
-func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error{
-  // Create IP packet
-  tcpHdr := header.TCPFields{
-    SrcPort:    sock.Conn.LocalPort,
-    DstPort:    sock.Conn.RemotePort,
-    SeqNum:     sock.Conn.SeqNum,
-    AckNum:     sock.Conn.AckNum,
-    DataOffset: 20,  // TCP header size in bytes
-    Flags:      flags,
-    WindowSize: sock.Conn.WindowSize,
-}
+func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error {
+    var tcpHdr header.TCPFields
+    var localAddr, remoteAddr netip.Addr
 
-// Create TCP header bytes and compute checksum
-  checksum := iptcp_utils.ComputeTCPChecksum(&tcpHdr, sock.Conn.LocalAddr, sock.Conn.RemoteAddr, nil)
-  tcpHdr.Checksum = checksum
-
-  tcpHeaderBytes := make(header.TCP, iptcp_utils.TcpHeaderLen)
-  tcp := header.TCP(tcpHeaderBytes)
-  tcp.Encode(&tcpHdr)
-
-  ipBytes := append(tcp, data...)
-  //src and dest should switch if flags are in handshake?
-  hdr := ipv4header.IPv4Header{
-            Version:  4,
-            Len: 	20, // Header length is always 20 when no IP options
-            TOS:      0,
-            TotalLen: ipv4header.HeaderLen + len(tcp),//??data 
-            ID:       0,
-            Flags:    0,
-            FragOff:  0,
-            TTL:      32, // idk man
-            Protocol: 6,
-            Checksum: 0, // Should be 0 until checksum is computed
-            Src:      sock.Conn.LocalAddr, // double check
-            Dst:      sock.Conn.RemoteAddr, // double check
-            Options:  []byte{},
+    if sock.Listen != nil {
+        // This is a listening socket - use Listen field
+        tcpHdr = header.TCPFields{
+            SrcPort:    sock.Listen.LocalPort,
+            DstPort:    sock.Listen.SrcPort,  // Use info from last received packet
+            SeqNum:     uint32(time.Now().UnixNano()),  // Generate new seq for SYN-ACK
+            AckNum:     sock.Listen.SeqNum + 1,
+            DataOffset: 20,
+            Flags:      flags,
+            WindowSize: 65535,  // Default window size
         }
-  // Send IP packet
-  //fmt.Println(data)
-  err := SendIP(stack, &hdr, ipBytes)
-  if err != nil {
-    fmt.Println("Error sending IP packet")
-    return err
-  }
-  return nil
+        //wrong
+        localAddr = sock.Listen.DstAddr
+        remoteAddr = sock.Listen.SrcAddr
+        fmt.Println(sock.Listen.SrcPort)
+
+    } else {
+        // Normal connected socket - use Conn field
+        tcpHdr = header.TCPFields{
+            SrcPort:    sock.Conn.LocalPort,
+            DstPort:    sock.Conn.RemotePort,
+            SeqNum:     sock.Conn.SeqNum,
+            AckNum:     sock.Conn.AckNum,
+            DataOffset: 20,
+            Flags:      flags,
+            WindowSize: sock.Conn.WindowSize,
+        }
+        localAddr = sock.Conn.LocalAddr
+        remoteAddr = sock.Conn.RemoteAddr
+    }
+
+    // Create TCP header bytes and compute checksum
+    checksum := iptcp_utils.ComputeTCPChecksum(&tcpHdr, localAddr, remoteAddr, nil)
+    tcpHdr.Checksum = checksum
+    tcpHeaderBytes := make(header.TCP, iptcp_utils.TcpHeaderLen)
+    tcp := header.TCP(tcpHeaderBytes)
+    tcp.Encode(&tcpHdr)
+
+    ipBytes := append(tcp, data...)
+
+    hdr := ipv4header.IPv4Header{
+        Version:  4,
+        Len:     20,
+        TOS:     0,
+        TotalLen: ipv4header.HeaderLen + len(tcp),
+        ID:      0,
+        Flags:   0,
+        FragOff: 0,
+        TTL:     32,
+        Protocol: 6,
+        Checksum: 0,
+        Src:     localAddr,
+        Dst:     remoteAddr,
+        Options: []byte{},
+    }
+
+    return SendIP(stack, &hdr, ipBytes)
 }
 
 

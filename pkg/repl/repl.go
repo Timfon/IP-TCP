@@ -176,7 +176,6 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         continue
       }
       ACommand(uint16(port), tcpstack)
-      fmt.Println(tcpstack.Sockets[1])
     } else if strings.HasPrefix(input, "ls") {
       w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
       fmt.Fprintln(w, "SID\tLAddr\tLPort\tRAddr\tRPort\tStatus")

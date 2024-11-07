@@ -43,6 +43,12 @@ type VTCPListener struct {
     AcceptQueue chan *VTCPConn
     LocalPort uint16  
     Closed bool
+
+    //info about previous packet
+    SrcAddr netip.Addr
+    DstAddr netip.Addr
+    SrcPort uint16
+    SeqNum  uint32
 }
   
 
