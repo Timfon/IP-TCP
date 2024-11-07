@@ -19,13 +19,14 @@ func main() {
 		panic(err)
 	}
   //sets everything up
-  ip_stack, err := iptcpstack.InitializeStack(lnxConfig)
+
+  //tcp
+  tcp_stack, err := iptcpstack.InitializeTCP(lnxConfig)
   if err != nil {
     panic(err)
   }
 
-  //tcp
-  tcp_stack, err := iptcpstack.InitializeTCP(lnxConfig)
+  ip_stack, err := iptcpstack.InitializeStack(lnxConfig, tcp_stack)
   if err != nil {
     panic(err)
   }

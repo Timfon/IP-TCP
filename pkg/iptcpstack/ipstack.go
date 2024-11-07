@@ -79,6 +79,8 @@ type IPStack struct {
 	Neighbors   []lnxconfig.NeighborConfig
 	RoutingMode lnxconfig.RoutingMode
 
+  TcpStack *TCPStack
+
 	// ROUTERS ONLY:  Neighbors to send RIP packets
 	RipNeighbors []netip.Addr
 
@@ -99,7 +101,7 @@ type IPStack struct {
 	Default_Addr netip.Prefix
 }
 
-func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error) {
+func InitializeStack(config *lnxconfig.IPConfig, tcpstack *TCPStack) (*IPStack, error) {
 
 	var ifaces map[string]*Interface
 	ifaces = make(map[string]*Interface)
@@ -153,6 +155,7 @@ func InitializeStack(config *lnxconfig.IPConfig) (*IPStack, error) {
 		RipTimeoutThreshold:   config.RipTimeoutThreshold,
 		TcpRtoMin:             config.TcpRtoMin,
 		TcpRtoMax:             config.TcpRtoMax,
+    TcpStack:              tcpstack,
 
 		ForwardingTable: ForwardingTable{
 			Routes: routes,
@@ -213,11 +216,15 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) error {
 		}
 		if route.VirtualIP == dst {
 			//print bytes sents
-			fmt.Println("Sent", len(data)+20, "bytes")
-			if header.TTL == 32 {
-				header.TTL = header.TTL - 1
-			}
-			TestPacketHandler(&Packet{Header: *header, Body: data}, []interface{}{stack})
+      if header.TTL == 32 {
+        header.TTL = header.TTL - 1
+      }
+      if header.Protocol == 0 {
+        fmt.Println("Sent", len(data)+20, "bytes")
+        TestPacketHandler(&Packet{Header: *header, Body: data}, []interface{}{stack})
+      } else if header.Protocol == 6 {
+        TCPPacketHandler(&Packet{Header: *header, Body: data}, []interface{}{stack, stack.TcpStack})
+      }
 			return nil
 		}
 		for _, n := range stack.Neighbors {

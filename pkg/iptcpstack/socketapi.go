@@ -50,11 +50,9 @@ type VTCPListener struct {
     SrcPort uint16
     SeqNum  uint32
 }
-  
 
 func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStack) (*VTCPConn, error) {
     // Find route to destination
-    
     route, found, _ := ipStack.ForwardingTable.MatchPrefix(addr)
     if found == -1 {
         return nil, fmt.Errorf("no route to host %v", addr)
@@ -82,24 +80,56 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
         WindowSize: 65535,
         SendWindow: make([]byte, 0),
     }
-
-    sock:= &Socket{
-        SID: tcpStack.NextSocketID,
+    sock := &Socket{
+        SID:  tcpStack.NextSocketID,
         Conn: conn,
     }
     tcpStack.NextSocketID++
-    //tcpStack.Sockets[sock.SID] = sock //I don't think we should be adding synsent to the sockettable
     tcpStack.Sockets[sock.SID] = sock
 
+    const (
+        maxRetries = 3
+        retryTimeout = 3 * time.Second
+    )
 
-    // Create TCP header bytes
-    err:= ipStack.sendTCPPacket(sock, []byte{}, header.TCPFlagSyn)
+    // Initial SYN send
+    err := ipStack.sendTCPPacket(sock, []byte{}, header.TCPFlagSyn)
     if err != nil {
-        return nil, fmt.Errorf("failed to send SYN packet: %v", err)
+        delete(tcpStack.Sockets, sock.SID)
+        return nil, fmt.Errorf("failed to send initial SYN packet: %v", err)
     }
-    // Create connection object
 
-    return conn, nil
+    startTime := time.Now()
+    retries := 0
+
+    for {
+        // Check if we've been trying too long
+        if time.Since(startTime) > 30*time.Second {
+            delete(tcpStack.Sockets, sock.SID)
+            return nil, fmt.Errorf("connection timed out after 30 seconds")
+        }
+
+        // Check if connection established
+        if sock.Conn.State == Established {
+            return conn, nil
+        }
+
+        // Check if it's time to retry
+        if time.Since(startTime) >= time.Duration(retries+1)*retryTimeout {
+            if retries >= maxRetries {
+                delete(tcpStack.Sockets, sock.SID)
+                return nil, fmt.Errorf("connection failed after %d SYN retransmissions", maxRetries)
+            }
+
+            fmt.Printf("Retransmitting SYN (attempt %d/%d)\n", retries+1, maxRetries)
+            err := ipStack.sendTCPPacket(sock, []byte{}, header.TCPFlagSyn)
+            if err != nil {
+                delete(tcpStack.Sockets, sock.SID)
+                return nil, fmt.Errorf("failed to retransmit SYN packet: %v", err)
+            }
+            retries++
+        }
+    }
 }
 
 func (tcpStack *TCPStack) VListen(port uint16) (*VTCPListener, error){

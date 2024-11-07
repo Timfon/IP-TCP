@@ -23,11 +23,12 @@ func main() {
 	}
 
 	// Goroutine for each interface
-  stack, err := iptcpstack.InitializeStack(lnxConfig)
   tcp_stack, err := iptcpstack.InitializeTCP(lnxConfig)
   if err != nil {
 	panic(err)
 	  }
+
+  stack, err := iptcpstack.InitializeStack(lnxConfig, tcp_stack)
   //need to consult forwarding table to know the src of a packet interesting
   //hacky solution for now
   stack.RegisterRecvHandler(0, iptcpstack.TestPacketHandler)

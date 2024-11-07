@@ -52,20 +52,18 @@ func TCPPacketHandler(packet *Packet, args []interface{}) {
     tcpStack := args[1].(*TCPStack)
     hdr := packet.Header
     tcpHdr := iptcp_utils.ParseTCPHeader(packet.Body)
-
     sock := tcpStack.FindSocket(hdr.Dst, tcpHdr.DstPort, hdr.Src, tcpHdr.SrcPort)
     if sock == nil {
         fmt.Println("No matching socket found, dropping packet")
         fmt.Print("> ")
         return
     }
-
     // Handle listening socket case
     if sock.Listen != nil {
         if tcpHdr.Flags & header.TCPFlagSyn != 0 {
             handleSynReceived(sock, packet, tcpHdr, stack, tcpStack)
         }
-        return  // Return here! Don't try to handle connection state
+        return 
     }
 
     // Only proceed if we have a connection
@@ -185,11 +183,8 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
             Flags:      flags,
             WindowSize: 65535,  // Default window size
         }
-        //wrong
         localAddr = sock.Listen.DstAddr
         remoteAddr = sock.Listen.SrcAddr
-        fmt.Println(sock.Listen.SrcPort)
-
     } else {
         // Normal connected socket - use Conn field
         tcpHdr = header.TCPFields{
