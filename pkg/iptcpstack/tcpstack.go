@@ -103,17 +103,15 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
       WindowSize: 65535,
       SendWindow: make([]byte, 0),
     }
-
-
     newSocket := Socket{
       SID: tcpstack.NextSocketID,
       Conn: new_Connection,
     }
-
     tcpstack.Sockets[newSocket.SID] = &newSocket
     tcpstack.NextSocketID++
 
     // Send the packet
+    fmt.Println("SYN received, sending SYN-ACK")
     err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck | header.TCPFlagSyn)
     if err != nil {
         return fmt.Errorf("failed to send SYN-ACK packet: %v", err)
@@ -122,10 +120,9 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 }
 
 func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) error{
-  sock.State = 3
-  sock.AckNum = tcpHdr.SeqNum + 1
+  sock.Conn.State = 3
+  sock.Conn.AckNum = tcpHdr.SeqNum + 1
   fmt.Println("SYN-ACK received, connection established")
-
   // Send ACK
   err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
   if err != nil {
@@ -142,7 +139,7 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 
 func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
   // Send ACK
-  ackHdr := header.TCPFields{
+  _ = header.TCPFields{
     SrcPort:    sock.Conn.LocalPort,
     DstPort:    sock.Conn.RemotePort,
     SeqNum:     sock.Conn.SeqNum,
@@ -151,33 +148,42 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
     WindowSize: sock.Conn.WindowSize,
   }
   // Create and send ACK packet
-  sendTCPPacket(sock, ackHdr, stack, packet)
+  //maybe:
+  // ackChecksum := iptcp_utils.ComputeTCPChecksum(&ackHdr, sock.Conn.LocalAddr, sock.Conn.RemoteAddr, nil)
+  // ackHdr.Checksum = ackChecksum
+  // ackHeaderBytes := make(header.TCP, iptcp_utils.TcpHeaderLen)
+  // ack := header.TCP(ackHeaderBytes)
+  // ack.Encode(&ackHdr)
+  // err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+  // if err != nil {
+  //   fmt.Println("Error sending ACK packet")
+  //   return
+  // }
+  stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
 }
 
 func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error{
   // Create IP packet
-  
-  data := packet.Body //??data
   tcpHdr := header.TCPFields{
-    SrcPort:    sock.LocalPort,
-    DstPort:    tcpHdr.remotePort,
-    SeqNum:     sock.SeqNum,
-    AckNum:     sock.AckNum,
+    SrcPort:    sock.Conn.LocalPort,
+    DstPort:    sock.Conn.RemotePort,
+    SeqNum:     sock.Conn.SeqNum,
+    AckNum:     sock.Conn.AckNum,
     DataOffset: 20,  // TCP header size in bytes
     Flags:      flags,
-    WindowSize: sock.WindowSize,
+    WindowSize: sock.Conn.WindowSize,
 }
 
 // Create TCP header bytes and compute checksum
-  checksum := iptcp_utils.ComputeTCPChecksum(&synAckHdr, sock.LocalAddr, sock.RemoteAddr, nil)
+  checksum := iptcp_utils.ComputeTCPChecksum(&tcpHdr, sock.Conn.LocalAddr, sock.Conn.RemoteAddr, nil)
   tcpHdr.Checksum = checksum
 
   tcpHeaderBytes := make(header.TCP, iptcp_utils.TcpHeaderLen)
   tcp := header.TCP(tcpHeaderBytes)
   tcp.Encode(&tcpHdr)
 
-
   ipBytes := append(tcp, data...)
+  //src and dest should switch if flags are in handshake?
   hdr := ipv4header.IPv4Header{
             Version:  4,
             Len: 	20, // Header length is always 20 when no IP options
@@ -187,17 +193,20 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
             Flags:    0,
             FragOff:  0,
             TTL:      32, // idk man
-            Protocol: 0,
+            Protocol: 6,
             Checksum: 0, // Should be 0 until checksum is computed
-            Src:      packet.Header.Dst, // double check
-            Dst:      packet.Header.Dst, // double check
+            Src:      sock.Conn.LocalAddr, // double check
+            Dst:      sock.Conn.RemoteAddr, // double check
             Options:  []byte{},
         }
-
-  
   // Send IP packet
   //fmt.Println(data)
   err := SendIP(stack, &hdr, ipBytes)
+  if err != nil {
+    fmt.Println("Error sending IP packet")
+    return err
+  }
+  return nil
 }
 
 

@@ -176,20 +176,45 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         continue
       }
       ACommand(uint16(port), tcpstack)
+      fmt.Println(tcpstack.Sockets[1])
     } else if strings.HasPrefix(input, "ls") {
       w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
       fmt.Fprintln(w, "SID\tLAddr\tLPort\tRAddr\tRPort\tStatus")
       for _, sock := range tcpstack.Sockets {
-		
-		var sockState string
-		
-		switch sock.State {
-		case 0 : sockState = "LISTEN"
-		case 1 : sockState = "SYN-SENT"
-		case 2 : sockState = "SYN-RECEIVED"
-		case 3 : sockState = "ESTABLISHED"
-		}
-        fmt.Fprintln(w, fmt.Sprintf("%d\t%s\t%d\t%s\t%d\t%s", sock.SID, sock.LocalAddr.String(), sock.LocalPort, sock.RemoteAddr.String(), sock.RemotePort, sockState))
+          var sockState, laddr, raddr string
+          var lport, rport uint16
+          if sock.Conn == nil {
+              // This is a listening socket
+              sockState = "LISTEN"
+              laddr = "0.0.0.0"    // or whatever your default listening address is
+              lport = sock.Listen.LocalPort
+              raddr = "*"
+              rport = 0
+          } else {
+              // This is a connected socket
+              switch sock.Conn.State {
+              case 0:
+                  sockState = "LISTEN"
+              case 1:
+                  sockState = "SYN-SENT"
+              case 2:
+                  sockState = "SYN-RECEIVED"
+              case 3:
+                  sockState = "ESTABLISHED"
+              }
+              laddr = sock.Conn.LocalAddr.String()
+              lport = sock.Conn.LocalPort
+              raddr = sock.Conn.RemoteAddr.String()
+              rport = sock.Conn.RemotePort
+          }
+
+          fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%d\t%s\n", 
+              sock.SID, 
+              laddr, 
+              lport, 
+              raddr, 
+              rport, 
+              sockState)
       }
       w.Flush()
     }
@@ -198,7 +223,7 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
 
 func ACommand(port uint16, tcpstack *iptcpstack.TCPStack) {
     // Create listening socket
-    listenConn, err := socket.VListen(port, tcpstack)
+    listenConn, err := tcpstack.VListen(port)
     if err != nil {
         fmt.Println(err)
         return

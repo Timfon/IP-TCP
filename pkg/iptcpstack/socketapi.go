@@ -46,7 +46,7 @@ type VTCPListener struct {
 }
   
 
-func ( tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStack) (*VTCPConn, error) {
+func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStack) (*VTCPConn, error) {
     // Find route to destination
     
     route, found, _ := ipStack.ForwardingTable.MatchPrefix(addr)
