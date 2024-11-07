@@ -28,64 +28,65 @@ func InitializeTCP(config *lnxconfig.IPConfig) (*TCPStack, error){
 }
 
 func (stack *TCPStack) FindSocket(localAddr netip.Addr, localPort uint16, remoteAddr netip.Addr, remotePort uint16) *Socket {
-    // First check listening sockets
+    // First check for exact connection match
+    for _, sock := range stack.Sockets {
+        if sock.Conn != nil && 
+           sock.Conn.LocalPort == localPort &&
+           sock.Conn.RemotePort == remotePort {
+            return sock
+        }
+    }
+
+    // If no connection found, check listening sockets
     for _, sock := range stack.Sockets {
         if sock.Listen != nil && sock.Listen.LocalPort == localPort {
             return sock
         }
     }
 
-    // Then check connected sockets
-    for _, sock := range stack.Sockets {
-        if sock.Conn != nil && 
-           sock.Conn.LocalAddr == localAddr &&
-           sock.Conn.LocalPort == localPort &&
-           sock.Conn.RemoteAddr == remoteAddr &&
-           sock.Conn.RemotePort == remotePort {
-            return sock
-        }
-    }
     return nil
 }
 
-func TCPPacketHandler(packet *Packet, args []interface{}){
-  //guaranteed that packet is a tcp packet
-  //need to first parse IP
-  //then parse TCP
-  stack := args[0].(*IPStack)
-  tcpStack := args[1].(*TCPStack)
-  hdr := packet.Header
+func TCPPacketHandler(packet *Packet, args []interface{}) {
+    stack := args[0].(*IPStack)
+    tcpStack := args[1].(*TCPStack)
+    hdr := packet.Header
+    tcpHdr := iptcp_utils.ParseTCPHeader(packet.Body)
 
-
-  tcpHdr := iptcp_utils.ParseTCPHeader(packet.Body)
-
-  sock := tcpStack.FindSocket(hdr.Dst, tcpHdr.DstPort, hdr.Src, tcpHdr.SrcPort)
-  if sock == nil {
-    fmt.Println("No matching socket found, dropping packet")
-    fmt.Print("> ")
-    return
-  }
-
-  if sock.Listen != nil {
-    if tcpHdr.Flags & header.TCPFlagSyn != 0 {
-      handleSynReceived(sock, packet, tcpHdr, stack, tcpStack)
-    }   
-    return
-  }
-
-  //handle the packet
-  switch sock.Conn.State {
-  case 1:
-    if tcpHdr.Flags & header.TCPFlagSyn != 0 && tcpHdr.Flags & header.TCPFlagAck != 0 {
-      handleSynAckReceived(sock, packet, tcpHdr, stack)
+    sock := tcpStack.FindSocket(hdr.Dst, tcpHdr.DstPort, hdr.Src, tcpHdr.SrcPort)
+    if sock == nil {
+        fmt.Println("No matching socket found, dropping packet")
+        fmt.Print("> ")
+        return
     }
-  case 2:
-    if tcpHdr.Flags & header.TCPFlagAck != 0 {
-      handleAckReceived(sock, packet, tcpHdr, stack)
+
+    // Handle listening socket case
+    if sock.Listen != nil {
+        if tcpHdr.Flags & header.TCPFlagSyn != 0 {
+            handleSynReceived(sock, packet, tcpHdr, stack, tcpStack)
+        }
+        return  // Return here! Don't try to handle connection state
     }
-  case 3:
-    handleEstablished(sock, packet, tcpHdr, stack)
-  }
+
+    // Only proceed if we have a connection
+    if sock.Conn == nil {
+        fmt.Println("Socket has no connection, dropping packet")
+        return
+    }
+
+    // Now safe to check connection state
+    switch sock.Conn.State {
+    case 1:
+        if tcpHdr.Flags & header.TCPFlagSyn != 0 && tcpHdr.Flags & header.TCPFlagAck != 0 {
+            handleSynAckReceived(sock, packet, tcpHdr, stack)
+        }
+    case 2:
+        if tcpHdr.Flags & header.TCPFlagAck != 0 {
+            handleAckReceived(sock, packet, tcpHdr, stack)
+        }
+    case 3:
+        handleEstablished(sock, packet, tcpHdr, stack)
+    }
 }
 
 func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack, tcpstack *TCPStack) error {
