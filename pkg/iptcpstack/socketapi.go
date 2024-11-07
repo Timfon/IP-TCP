@@ -2,7 +2,7 @@ package iptcpstack
 
 import (
 	"net/netip"
-	"IP-TCP/pkg/iptcp_utils"
+	//"IP-TCP/pkg/iptcp_utils"
 	"math/rand"
     "fmt"
     "time"
@@ -24,7 +24,6 @@ type Socket struct {
   Conn *VTCPConn 
   Listen *VTCPListener
   Closed bool
- 
 }
 
 type VTCPConn struct {
@@ -43,6 +42,7 @@ type VTCPConn struct {
 type VTCPListener struct {
     AcceptQueue chan *VTCPConn
     LocalPort uint16  
+    Closed bool
 }
   
 
@@ -124,22 +124,22 @@ func (tcpStack *TCPStack) VListen(port uint16) (*VTCPListener, error){
     return conn, nil
   }
   
-  func (l *VTCPListener) VClose() error {
-    if l.Closed {
-      return fmt.Errorf("Listener is already closed")
-    }
-  
-    l.Closed = true
-    close(l.AcceptQueue)
-    delete(l.TcpStack.Sockets, l.Socket.SID)
-    return nil
-  }
-  
-  
-  func (c *VTCPConn) VClose() error {
-    if c.closed {
-      return fmt.Errorf("Connection is already closed")
-    }
-    c.closed = true
-    return nil
-  }
+  //deal with close later
+  // func (l *VTCPListener) VClose() error {
+  //   if l.Closed {
+  //     return fmt.Errorf("Listener is already closed")
+  //   }
+  // 
+  //   l.Closed = true
+  //   close(l.AcceptQueue)
+  //   delete(Sockets, l.SID)
+  //   return nil
+  // }
+  //
+  // func (c *VTCPConn) VClose() error {
+  //   if c.closed {
+  //     return fmt.Errorf("Connection is already closed")
+  //   }
+  //   c.closed = true
+  //   return nil
+  // }

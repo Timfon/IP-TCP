@@ -91,8 +91,8 @@ func TCPPacketHandler(packet *Packet, args []interface{}){
 
 func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack, tcpstack *TCPStack) error {
     //add new socket to socket table
-    l = sock.Listen
-    new_Connection = &VTCPConn{
+    l := sock.Listen
+    new_Connection := &VTCPConn{
       State: 2,
       LocalAddr: packet.Header.Dst,
       LocalPort: l.LocalPort,
@@ -105,15 +105,14 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
     }
 
 
-    newSocket = Socket{
+    newSocket := Socket{
       SID: tcpstack.NextSocketID,
       Conn: new_Connection,
     }
 
     tcpstack.Sockets[newSocket.SID] = &newSocket
-    tcpStack.NextSocketID++
+    tcpstack.NextSocketID++
 
-    //
     // Send the packet
     err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck | header.TCPFlagSyn)
     if err != nil {
@@ -129,7 +128,6 @@ func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields,
 
   // Send ACK
   err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
- 
   if err != nil {
       return fmt.Errorf("failed to send SYN-ACK packet: %v", err)
   }
@@ -138,19 +136,19 @@ func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields,
 
 func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
   fmt.Println("ACK received, connection established")
-  sock.State = 3
-  sock.AckNum = tcpHdr.SeqNum + 1
+  sock.Conn.State = 3
+  sock.Conn.AckNum = tcpHdr.SeqNum + 1
 }
 
 func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
   // Send ACK
   ackHdr := header.TCPFields{
-    SrcPort:    sock.LocalPort,
-    DstPort:    sock.RemotePort,
-    SeqNum:     sock.SeqNum,
-    AckNum:     sock.AckNum,
+    SrcPort:    sock.Conn.LocalPort,
+    DstPort:    sock.Conn.RemotePort,
+    SeqNum:     sock.Conn.SeqNum,
+    AckNum:     sock.Conn.AckNum,
     Flags:      header.TCPFlagAck,
-    WindowSize: sock.WindowSize,
+    WindowSize: sock.Conn.WindowSize,
   }
   // Create and send ACK packet
   sendTCPPacket(sock, ackHdr, stack, packet)
