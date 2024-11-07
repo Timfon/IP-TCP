@@ -239,7 +239,6 @@ func ACommand(port uint16, tcpstack *iptcpstack.TCPStack) {
             // The connection is now established and ready for use by other REPL commands
             // We don't need to do anything else with it here
             listenConn.AcceptQueue <- conn
-            fmt.Println(conn)
         }
     }()
 }
