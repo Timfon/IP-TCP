@@ -73,6 +73,7 @@ func TCPPacketHandler(packet *Packet, args []interface{}) {
     }
 
     // Now safe to check connection state
+    fmt.Println(sock.Conn.State)
     switch sock.Conn.State {
     case 1:
         if tcpHdr.Flags & header.TCPFlagSyn != 0 && tcpHdr.Flags & header.TCPFlagAck != 0 {
@@ -106,9 +107,9 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
       RemotePort: tcpHdr.SrcPort,
       SeqNum: uint32(time.Now().UnixNano()),
       AckNum: tcpHdr.SeqNum + 1,
-      WindowSize: 65535,
-      SendWindow: make([]byte, 0),
+      Window: NewWindow(65535),
     }
+
     newSocket := Socket{
       SID: tcpstack.NextSocketID,
       Conn: new_Connection,
@@ -143,32 +144,42 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
   sock.Conn.AckNum = tcpHdr.SeqNum + 1
 }
 
-func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
-  // Send ACK
-  _ = header.TCPFields{
-    SrcPort:    sock.Conn.LocalPort,
-    DstPort:    sock.Conn.RemotePort,
-    SeqNum:     sock.Conn.SeqNum,
-    AckNum:     sock.Conn.AckNum,
-    Flags:      header.TCPFlagAck,
-    WindowSize: sock.Conn.WindowSize,
-  }
-  // Create and send ACK packet
-  //maybe:
-  // ackChecksum := iptcp_utils.ComputeTCPChecksum(&ackHdr, sock.Conn.LocalAddr, sock.Conn.RemoteAddr, nil)
-  // ackHdr.Checksum = ackChecksum
-  // ackHeaderBytes := make(header.TCP, iptcp_utils.TcpHeaderLen)
-  // ack := header.TCP(ackHeaderBytes)
-  // ack.Encode(&ackHdr)
-  // err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
-  // if err != nil {
-  //   fmt.Println("Error sending ACK packet")
-  //   return
-  // }
-  stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+// Simplify handleEstablished to just handle in-order data
+func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
+    payloadOffset := int(tcpHdr.DataOffset)
+    payload := packet.Body[payloadOffset:]
+    
+    if len(payload) > 0 {
+        expectedSeq := sock.Conn.Window.RecvNext
+        if tcpHdr.SeqNum == expectedSeq {
+            // Copy data to receive buffer
+            start := sock.Conn.Window.RecvNext % sock.Conn.Window.RecvWindowSize
+            if start+uint32(len(payload)) <= sock.Conn.Window.RecvWindowSize {
+                copy(sock.Conn.Window.RecvBuf[start:], payload)
+            } else {
+                firstPart := sock.Conn.Window.RecvWindowSize - start
+                copy(sock.Conn.Window.RecvBuf[start:], payload[:firstPart])
+                copy(sock.Conn.Window.RecvBuf[:], payload[firstPart:])
+            }
+            
+            // Update RecvNext
+            sock.Conn.Window.RecvNext += uint32(len(payload))
+            
+            // Signal data availability
+            select {
+            case sock.Conn.Window.DataAvailable <- struct{}{}: // Signal data arrival
+            default: // Channel already has signal, no need to send another
+            }
+            
+            // Send ACK
+            sock.Conn.AckNum = tcpHdr.SeqNum + uint32(len(payload))
+            stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+        }
+    }
 }
 
 func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error {
+
     var tcpHdr header.TCPFields
     var localAddr, remoteAddr netip.Addr
 
@@ -194,7 +205,7 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
             AckNum:     sock.Conn.AckNum,
             DataOffset: 20,
             Flags:      flags,
-            WindowSize: sock.Conn.WindowSize,
+            WindowSize: 65535,  // Default window size
         }
         localAddr = sock.Conn.LocalAddr
         remoteAddr = sock.Conn.RemoteAddr
@@ -224,6 +235,8 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
         Dst:     remoteAddr,
         Options: []byte{},
     }
+    fmt.Println(localAddr)
+    fmt.Println(remoteAddr)
 
     return SendIP(stack, &hdr, ipBytes)
 }

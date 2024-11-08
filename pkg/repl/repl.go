@@ -159,11 +159,13 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         fmt.Printf("Invalid port number: %v\n", err)
         continue
       }
-      _ , err = tcpstack.VConnect(vip, uint16(port), stack)
+      _, err = tcpstack.VConnect(vip, uint16(port), stack)
       if err != nil {
         fmt.Println(err)
         continue
       }
+
+
 		} else if strings.HasPrefix(input, "a") {
       parts := strings.SplitN(input, " ", 2)
       if len(parts) != 2 {
@@ -216,6 +218,52 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
               sockState)
       }
       w.Flush()
+    } else if strings.HasPrefix(input, "s") {
+      parts := strings.SplitN(input, " ", 3)
+      if len(parts) != 3 {
+          fmt.Println("Usage: s <sid> <message>")
+          continue
+      }
+      sid, err := strconv.Atoi(parts[1])
+      if err != nil {
+          fmt.Printf("Invalid socket ID: %v\n", err)
+          continue
+      }
+      messageBytes := []byte(parts[2])
+      fmt.Println(int(sid))
+
+      //this is so cursed wtf is this
+      bytesWritten, err := tcpstack.Sockets[int(sid)].Conn.VWrite(messageBytes, stack, tcpstack.Sockets[int(sid)])
+      if err != nil {
+        fmt.Println(err)
+        continue
+      }
+      fmt.Printf("Wrote %d bytes\n", bytesWritten)
+
+    } else if strings.HasPrefix(input, "r") {
+      parts := strings.SplitN(input, " ", 3)
+      if len(parts) != 3 {
+        fmt.Println("Usage: r <sid> <numBytes>")
+        continue
+      }
+      sid, err := strconv.Atoi(parts[1])
+      if err != nil {
+        fmt.Printf("Invalid socket ID: %v\n", err)
+        continue
+      }
+      numBytes, err := strconv.Atoi(parts[2])
+      if err != nil {
+        fmt.Printf("Invalid number of bytes: %v\n", err)
+        continue
+      }
+      buf := make([]byte, numBytes)
+      data, err := tcpstack.Sockets[int(sid)].Conn.VRead(buf)
+      if err != nil {
+        fmt.Println(err)
+        continue
+      }
+      fmt.Println(buf)
+      fmt.Printf("Read %d bytes: %s\n", data, buf[:data])
     }
 	}
 }
