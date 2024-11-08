@@ -81,44 +81,52 @@ func (c *VTCPConn) VRead(buf []byte) (int, error) {
         return 0, fmt.Errorf("connection not established")
     }
 
-    // Wait for data with timeout
-    timeout := time.After(30 * time.Second)
+    // Calculate available data in the buffer
+    availData := int(c.Window.RecvNext - c.Window.RecvLBR)
+    fmt.Printf("Debug - Available data: %d (RecvNext: %d, RecvLBR: %d)\n", 
+              availData, c.Window.RecvNext, c.Window.RecvLBR)
 
-    for {
-        // Check if data is available
-        availData := int(c.Window.RecvNext - c.Window.RecvLBR)
-        if availData > 0 {
-            // Data available, process it
-            readLen := len(buf)
-            if readLen > availData {
-                readLen = availData
-            }
-
-            // Copy data from receive buffer
-            start := c.Window.RecvLBR % c.Window.RecvWindowSize
-            if start+uint32(readLen) <= c.Window.RecvWindowSize {
-                copy(buf, c.Window.RecvBuf[start:start+uint32(readLen)])
-            } else {
-                firstPart := c.Window.RecvWindowSize - start
-                copy(buf, c.Window.RecvBuf[start:])
-                copy(buf[firstPart:], c.Window.RecvBuf[:readLen-int(firstPart)])
-            }
-
-            c.Window.RecvLBR += uint32(readLen)
-            return readLen, nil
+    if availData > 0 {
+        // Calculate how much we can read
+        readLen := len(buf)
+        if readLen > availData {
+            readLen = availData
         }
 
-        // No data available, wait for notification or timeout
-        select {
-        case <-c.Window.DataAvailable:
-            continue // Check for data again
-        case <-timeout:
-            return 0, fmt.Errorf("read timeout")
+        // Calculate starting position in circular buffer
+        bufPos := c.Window.RecvLBR % c.Window.RecvWindowSize
+        fmt.Printf("Debug - Reading from buffer position %d, length %d\n", bufPos, readLen)
+        
+        // Copy data from receive buffer to provided buffer
+        if bufPos+uint32(readLen) <= c.Window.RecvWindowSize {
+            copy(buf[:readLen], c.Window.RecvBuf[bufPos:bufPos+uint32(readLen)])
+        } else {
+            // Handle wrap-around
+            firstPart := int(c.Window.RecvWindowSize - bufPos)
+            copy(buf[:firstPart], c.Window.RecvBuf[bufPos:])
+            copy(buf[firstPart:readLen], c.Window.RecvBuf[:readLen-firstPart])
         }
+
+        // Update read pointer
+        c.Window.RecvLBR += uint32(readLen)
+
+        fmt.Printf("Debug - Read %d bytes: %q\n", readLen, buf[:readLen])
+        return readLen, nil
+    }
+
+    // No data available, wait for more
+    fmt.Println("Debug - No data available, waiting...")
+    select {
+    case <-c.Window.DataAvailable:
+        fmt.Println("Debug - Received data notification")
+        return c.VRead(buf)  // Retry the read now that we have data
+    case <-time.After(30 * time.Second):
+        return 0, fmt.Errorf("read timeout")
     }
 }
 
 func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error) {
+
     if c.State != Established {
         return 0, fmt.Errorf("connection not established")
     }

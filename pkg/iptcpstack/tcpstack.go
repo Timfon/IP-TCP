@@ -73,7 +73,6 @@ func TCPPacketHandler(packet *Packet, args []interface{}) {
     }
 
     // Now safe to check connection state
-    fmt.Println(sock.Conn.State)
     switch sock.Conn.State {
     case 1:
         if tcpHdr.Flags & header.TCPFlagSyn != 0 && tcpHdr.Flags & header.TCPFlagAck != 0 {
@@ -98,84 +97,134 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
     //add new socket to socket table
     l := sock.Listen
 
-
     new_Connection := &VTCPConn{
-      State: 2,
-      LocalAddr: packet.Header.Dst,
-      LocalPort: l.LocalPort,
-      RemoteAddr: packet.Header.Src,
-      RemotePort: tcpHdr.SrcPort,
-      SeqNum: uint32(time.Now().UnixNano()),
-      AckNum: tcpHdr.SeqNum + 1,
-      Window: NewWindow(65535),
+        State: 2,
+        LocalAddr: packet.Header.Dst,
+        LocalPort: l.LocalPort,
+        RemoteAddr: packet.Header.Src,
+        RemotePort: tcpHdr.SrcPort,
+        SeqNum: uint32(time.Now().UnixNano()),
+        AckNum: tcpHdr.SeqNum + 1,
+        Window: NewWindow(65535),
     }
+    
+    // Initialize window tracking - for first data packet, we expect the original sequence number
+    new_Connection.Window.RecvNext = tcpHdr.SeqNum
+    new_Connection.Window.RecvLBR = tcpHdr.SeqNum
 
     newSocket := Socket{
-      SID: tcpstack.NextSocketID,
-      Conn: new_Connection,
+        SID: tcpstack.NextSocketID,
+        Conn: new_Connection,
     }
     tcpstack.Sockets[newSocket.SID] = &newSocket
     tcpstack.NextSocketID++
 
+    fmt.Printf("Debug - New connection initialized with RecvNext=%d, RecvLBR=%d, AckNum=%d\n",
+              new_Connection.Window.RecvNext,
+              new_Connection.Window.RecvLBR,
+              new_Connection.AckNum)
+
     // Send the packet
     fmt.Println("SYN received, sending SYN-ACK")
-    err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck | header.TCPFlagSyn)
+    err := stack.sendTCPPacket(&newSocket, []byte{}, header.TCPFlagAck | header.TCPFlagSyn)
     if err != nil {
         return fmt.Errorf("failed to send SYN-ACK packet: %v", err)
     }
     return nil
 }
 
-func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) error{
-  sock.Conn.State = 3
-  sock.Conn.AckNum = tcpHdr.SeqNum + 1
-  fmt.Println("SYN-ACK received, connection established")
-  // Send ACK
-  err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
-  if err != nil {
-      return fmt.Errorf("failed to send SYN-ACK packet: %v", err)
-  }
-  return nil
+// Also modify handleSynAckReceived to initialize RecvNext
+func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) error {
+    sock.Conn.State = 3
+    sock.Conn.AckNum = tcpHdr.SeqNum + 1
+    sock.Conn.Window.RecvNext = tcpHdr.SeqNum + 1  // Add this line
+    
+    fmt.Printf("Debug - Initialized RecvNext to %d\n", sock.Conn.Window.RecvNext)
+    fmt.Println("SYN-ACK received, connection established")
+    
+    // Send ACK
+    err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+    if err != nil {
+        return fmt.Errorf("failed to send SYN-ACK packet: %v", err)
+    }
+    return nil
 }
 
 func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
   fmt.Println("ACK received, connection established")
   sock.Conn.State = 3
-  sock.Conn.AckNum = tcpHdr.SeqNum + 1
+  //sock.Conn.AckNum = tcpHdr.SeqNum + 1
 }
 
 // Simplify handleEstablished to just handle in-order data
 func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
+    fmt.Println("=== handleEstablished called ===")
+    fmt.Printf("TCP Header: %+v\n", tcpHdr)
+    
     payloadOffset := int(tcpHdr.DataOffset)
     payload := packet.Body[payloadOffset:]
     
+    fmt.Printf("Payload offset: %d\n", payloadOffset)
+    fmt.Printf("Payload length: %d\n", len(payload))
     if len(payload) > 0 {
-        expectedSeq := sock.Conn.Window.RecvNext
-        if tcpHdr.SeqNum == expectedSeq {
-            // Copy data to receive buffer
-            start := sock.Conn.Window.RecvNext % sock.Conn.Window.RecvWindowSize
-            if start+uint32(len(payload)) <= sock.Conn.Window.RecvWindowSize {
-                copy(sock.Conn.Window.RecvBuf[start:], payload)
+        fmt.Printf("Payload contents: %s\n", string(payload))
+    }
+    
+    if len(payload) > 0 {
+        fmt.Printf("Debug - Current state before processing: RecvNext=%d, RecvLBR=%d, AckNum=%d\n",
+                  sock.Conn.Window.RecvNext,
+                  sock.Conn.Window.RecvLBR,
+                  sock.Conn.AckNum)
+        fmt.Printf("Debug - Received packet with SeqNum=%d\n", tcpHdr.SeqNum)
+
+        // Check if this is the sequence number we're expecting
+        if tcpHdr.SeqNum == sock.Conn.Window.RecvNext {
+            fmt.Println("Debug - Processing packet")
+            
+            // Calculate buffer position using modulo
+            bufPos := (sock.Conn.Window.RecvNext - sock.Conn.Window.RecvLBR) % sock.Conn.Window.RecvWindowSize
+            fmt.Printf("Debug - Writing to buffer at position %d\n", bufPos)
+            
+            // Copy the data into the receive buffer
+            if bufPos+uint32(len(payload)) <= sock.Conn.Window.RecvWindowSize {
+                copy(sock.Conn.Window.RecvBuf[bufPos:], payload)
             } else {
-                firstPart := sock.Conn.Window.RecvWindowSize - start
-                copy(sock.Conn.Window.RecvBuf[start:], payload[:firstPart])
-                copy(sock.Conn.Window.RecvBuf[:], payload[firstPart:])
+                // Handle wrap-around
+                firstPart := sock.Conn.Window.RecvWindowSize - bufPos
+                copy(sock.Conn.Window.RecvBuf[bufPos:], payload[:firstPart])
+                copy(sock.Conn.Window.RecvBuf[0:], payload[firstPart:])
             }
             
-            // Update RecvNext
+            // Update sequence tracking
             sock.Conn.Window.RecvNext += uint32(len(payload))
+            sock.Conn.AckNum = sock.Conn.Window.RecvNext
             
             // Signal data availability
             select {
-            case sock.Conn.Window.DataAvailable <- struct{}{}: // Signal data arrival
-            default: // Channel already has signal, no need to send another
+            case sock.Conn.Window.DataAvailable <- struct{}{}: 
+                fmt.Println("Successfully signaled data availability")
+            default: 
+                fmt.Println("Channel already has signal, skipped")
             }
             
             // Send ACK
-            sock.Conn.AckNum = tcpHdr.SeqNum + uint32(len(payload))
-            stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+            err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+            if err != nil {
+                fmt.Printf("Error sending ACK: %v\n", err)
+            } else {
+                fmt.Println("Successfully sent ACK")
+            }
+            
+            fmt.Printf("Debug - Updated state: RecvNext=%d, RecvLBR=%d, AckNum=%d\n",
+                      sock.Conn.Window.RecvNext,
+                      sock.Conn.Window.RecvLBR,
+                      sock.Conn.AckNum)
+        } else {
+            fmt.Printf("Sequence number mismatch - Expected: %d, Got: %d\n",
+                      sock.Conn.Window.RecvNext, tcpHdr.SeqNum)
         }
     }
+    fmt.Println("=== handleEstablished finished ===\n")
 }
 
 func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error {
@@ -235,8 +284,6 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
         Dst:     remoteAddr,
         Options: []byte{},
     }
-    fmt.Println(localAddr)
-    fmt.Println(remoteAddr)
 
     return SendIP(stack, &hdr, ipBytes)
 }
