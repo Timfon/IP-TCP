@@ -22,7 +22,7 @@ func InitializeTCP(config *lnxconfig.IPConfig) (*TCPStack, error){
     TcpRtoMin: config.TcpRtoMin,
     TcpRtoMax: config.TcpRtoMax,
     Sockets: make(map[int]*Socket),
-    NextSocketID: 1,
+    NextSocketID: 0,
   }
   return TcpStack, nil
 }
@@ -175,25 +175,17 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
                   sock.Conn.Window.RecvNext,
                   sock.Conn.Window.RecvLBR,
                   sock.Conn.AckNum)
-        fmt.Printf("Debug - Received packet with SeqNum=%d\n", tcpHdr.SeqNum)
-
-        // Check if this is the sequence number we're expecting
+                  
         if tcpHdr.SeqNum == sock.Conn.Window.RecvNext {
             fmt.Println("Debug - Processing packet")
             
-            // Calculate buffer position using modulo
-            bufPos := (sock.Conn.Window.RecvNext - sock.Conn.Window.RecvLBR) % sock.Conn.Window.RecvWindowSize
-            fmt.Printf("Debug - Writing to buffer at position %d\n", bufPos)
-            
-            // Copy the data into the receive buffer
-            if bufPos+uint32(len(payload)) <= sock.Conn.Window.RecvWindowSize {
-                copy(sock.Conn.Window.RecvBuf[bufPos:], payload)
-            } else {
-                // Handle wrap-around
-                firstPart := sock.Conn.Window.RecvWindowSize - bufPos
-                copy(sock.Conn.Window.RecvBuf[bufPos:], payload[:firstPart])
-                copy(sock.Conn.Window.RecvBuf[0:], payload[firstPart:])
+            // Write to receive buffer
+            n, err := sock.Conn.Window.recvBuffer.Write(payload)
+            if err != nil {
+                fmt.Printf("Error writing to receive buffer: %v\n", err)
+                return
             }
+            fmt.Printf("Debug - Wrote %d bytes to receive buffer\n", n)
             
             // Update sequence tracking
             sock.Conn.Window.RecvNext += uint32(len(payload))
@@ -208,7 +200,7 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
             }
             
             // Send ACK
-            err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+            err = stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
             if err != nil {
                 fmt.Printf("Error sending ACK: %v\n", err)
             } else {
@@ -228,7 +220,6 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 }
 
 func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error {
-
     var tcpHdr header.TCPFields
     var localAddr, remoteAddr netip.Addr
 

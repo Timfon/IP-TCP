@@ -257,13 +257,12 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         continue
       }
       buf := make([]byte, numBytes)
-      data, err := tcpstack.Sockets[int(sid)].Conn.VRead(buf)
+      _, err = tcpstack.Sockets[int(sid)].Conn.VRead(buf)
       if err != nil {
         fmt.Println(err)
         continue
       }
-      fmt.Println(buf)
-      fmt.Printf("Read %d bytes: %s\n", data, buf[:data])
+      fmt.Println("Read", numBytes, "bytes: ", string(buf))
     }
 	}
 }

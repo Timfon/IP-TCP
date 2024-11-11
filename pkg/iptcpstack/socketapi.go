@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"time"
 	"github.com/google/netstack/tcpip/header"
+  "github.com/smallnest/ringbuffer"
 )
 
 type SocketStatus int
@@ -25,15 +26,14 @@ type Socket struct {
 }
 
 type Window struct {
-    // Send stuff
-    SendBuf        []byte
+    recvBuffer     *ringbuffer.RingBuffer  // Buffer for receiving data
+    sendBuffer     *ringbuffer.RingBuffer  // Buffer for sending data
+
     SendUna        uint32
     SendNxt        uint32
     SendWindowSize uint32
     SendLBW        uint32
 
-    // Receive stuff
-    RecvBuf        []byte
     RecvNext       uint32
     RecvWindowSize uint32
     RecvLBR        uint32
@@ -67,8 +67,8 @@ type VTCPListener struct {
 
 func NewWindow(size int) *Window {
     w := &Window{
-        SendBuf:        make([]byte, size),
-        RecvBuf:        make([]byte, size),
+        recvBuffer:     ringbuffer.New(int(size)),
+        sendBuffer:     ringbuffer.New(int(size)),
         SendWindowSize: uint32(size),
         RecvWindowSize: uint32(size),
         DataAvailable:  make(chan struct{}, 1), // Buffer of 1 to prevent blocking on signal
@@ -80,57 +80,47 @@ func (c *VTCPConn) VRead(buf []byte) (int, error) {
     if c.State != Established {
         return 0, fmt.Errorf("connection not established")
     }
-
-    // Calculate available data in the buffer
+    
+    // Calculate available data using TCP sequence numbers
     availData := int(c.Window.RecvNext - c.Window.RecvLBR)
     fmt.Printf("Debug - Available data: %d (RecvNext: %d, RecvLBR: %d)\n", 
               availData, c.Window.RecvNext, c.Window.RecvLBR)
-
+              
     if availData > 0 {
-        // Calculate how much we can read
+        // Read from receive buffer
         readLen := len(buf)
         if readLen > availData {
             readLen = availData
         }
-
-        // Calculate starting position in circular buffer
-        bufPos := c.Window.RecvLBR % c.Window.RecvWindowSize
-        fmt.Printf("Debug - Reading from buffer position %d, length %d\n", bufPos, readLen)
         
-        // Copy data from receive buffer to provided buffer
-        if bufPos+uint32(readLen) <= c.Window.RecvWindowSize {
-            copy(buf[:readLen], c.Window.RecvBuf[bufPos:bufPos+uint32(readLen)])
-        } else {
-            // Handle wrap-around
-            firstPart := int(c.Window.RecvWindowSize - bufPos)
-            copy(buf[:firstPart], c.Window.RecvBuf[bufPos:])
-            copy(buf[firstPart:readLen], c.Window.RecvBuf[:readLen-firstPart])
+        n, err := c.Window.recvBuffer.Read(buf[:readLen])
+        if err != nil {
+            return 0, fmt.Errorf("error reading from receive buffer: %v", err)
         }
-
-        // Update read pointer
-        c.Window.RecvLBR += uint32(readLen)
-
-        fmt.Printf("Debug - Read %d bytes: %q\n", readLen, buf[:readLen])
-        return readLen, nil
+        
+        // Update TCP read pointer
+        c.Window.RecvLBR += uint32(n)
+        fmt.Printf("Debug - Read %d bytes: %q\n", n, buf[:n])
+        return n, nil
     }
-
+    
     // No data available, wait for more
     fmt.Println("Debug - No data available, waiting...")
     select {
     case <-c.Window.DataAvailable:
         fmt.Println("Debug - Received data notification")
-        return c.VRead(buf)  // Retry the read now that we have data
+        return c.VRead(buf)
     case <-time.After(30 * time.Second):
         return 0, fmt.Errorf("read timeout")
     }
 }
 
 func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error) {
-
     if c.State != Established {
         return 0, fmt.Errorf("connection not established")
     }
 
+    // Check available space in send window
     availSpace := int(c.Window.SendWindowSize - (c.Window.SendLBW - c.Window.SendUna))
     if availSpace <= 0 {
         return 0, fmt.Errorf("send buffer full")
@@ -141,25 +131,21 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error
         writeLen = availSpace
     }
 
-    // Copy to send buffer
-    start := c.Window.SendLBW % c.Window.SendWindowSize
-    if start+uint32(writeLen) <= c.Window.SendWindowSize {
-        copy(c.Window.SendBuf[start:], data[:writeLen])
-    } else {
-        firstPart := c.Window.SendWindowSize - start
-        copy(c.Window.SendBuf[start:], data[:firstPart])
-        copy(c.Window.SendBuf[:writeLen-int(firstPart)], data[firstPart:writeLen])
+    // Write to send buffer
+    n, err := c.Window.sendBuffer.Write(data[:writeLen])
+    if err != nil {
+        return 0, fmt.Errorf("failed to write to send buffer: %v", err)
     }
 
-    c.Window.SendLBW += uint32(writeLen)
+    c.Window.SendLBW += uint32(n)
     
-    // Actually send the data using TCP
-    err := stack.sendTCPPacket(sock, data[:writeLen], header.TCPFlagAck)
+    // Send the data
+    err = stack.sendTCPPacket(sock, data[:writeLen], header.TCPFlagAck)
     if err != nil {
         return 0, fmt.Errorf("failed to send data: %v", err)
     }
 
-    return writeLen, nil
+    return n, nil
 }
 
 func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStack) (*VTCPConn, error) {
