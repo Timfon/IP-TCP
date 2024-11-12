@@ -127,6 +127,36 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
     if err != nil {
         return fmt.Errorf("failed to send SYN-ACK packet: %v", err)
     }
+
+    startTime := time.Now()
+	retries := 0
+
+    for {
+		// Check if we've been trying too long
+		if time.Since(startTime) > 30*time.Second {
+			return fmt.Errorf("connection timed out after 30 seconds")
+		}
+
+		// Check if connection established
+		if sock.Conn.State == Established {
+			return nil
+		}
+
+		// Check if it's time to retry
+		if time.Since(startTime) >= time.Duration(retries+1)*retryTimeout {
+			if retries >= maxRetries {
+				return fmt.Errorf("connection failed after %d SYN-ACK retransmissions", maxRetries)
+			}
+
+			fmt.Printf("Retransmitting SYN (attempt %d/%d)\n", retries+1, maxRetries)
+			err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagSyn | header.TCPFlagAck)
+			if err != nil {
+				return fmt.Errorf("failed to retransmit SYN-ACK packet: %v", err)
+			}
+			retries++
+		}
+	}
+
     return nil
 }
 
@@ -144,8 +174,31 @@ func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields,
     // Send ACK
     err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
     if err != nil {
-        return fmt.Errorf("failed to send SYN-ACK packet: %v", err)
+        return fmt.Errorf("failed to send ACK packet: %v", err)
     }
+
+    startTime := time.Now()
+	retries := 0
+
+    for {
+		// Check if we've been trying too long
+		if time.Since(startTime) > 30*time.Second {
+			return fmt.Errorf("connection timed out after 30 seconds")
+		}
+		// Check if it's time to retry
+		if time.Since(startTime) >= time.Duration(retries+1)*retryTimeout {
+			if retries >= maxRetries {
+				return fmt.Errorf("connection failed after %d ACK retransmissions", maxRetries)
+			}
+
+			fmt.Printf("Retransmitting ACK (attempt %d/%d)\n", retries+1, maxRetries)
+			err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+			if err != nil {
+				return fmt.Errorf("failed to retransmit ACK packet: %v", err)
+			}
+			retries++
+		}
+	}
     return nil
 }
 
@@ -161,7 +214,7 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
     fmt.Println("=== handleEstablished called ===")
     fmt.Printf("TCP Header: %+v\n", tcpHdr)
-    
+    fmt.Printf("Packet: %+v\n", packet.Body)
     payloadOffset := int(tcpHdr.DataOffset)
     payload := packet.Body[payloadOffset:]
     
@@ -227,6 +280,7 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
     if sock.Conn == nil {
         return fmt.Errorf("can't send via listen socket")
     }
+    fmt.Printf("Data %+v\n", data)
         // Normal connected socket - use Conn field
     tcpHdr = header.TCPFields{
         SrcPort:    sock.Conn.LocalPort,
@@ -254,7 +308,7 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
         Version:  4,
         Len:     20,
         TOS:     0,
-        TotalLen: ipv4header.HeaderLen + len(tcp),
+        TotalLen: ipv4header.HeaderLen + len(ipBytes),
         ID:      0,
         Flags:   0,
         FragOff: 0,

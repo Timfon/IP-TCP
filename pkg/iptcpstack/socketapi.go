@@ -61,6 +61,11 @@ type VTCPListener struct {
 	// Info about previous packet
 }
 
+const (
+	maxRetries    = 3
+	retryTimeout  = 3 * time.Second
+)
+
 func NewWindow(size int) *Window {
     w := &Window{
         recvBuffer:     ringbuffer.New(int(size)),
@@ -140,6 +145,7 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error
     c.Window.SendLBW += uint32(n)
     
     // Send the data
+
     err = stack.sendTCPPacket(sock, data[:writeLen], header.TCPFlagAck)
     if err != nil {
         return 0, fmt.Errorf("failed to send data: %v", err)
@@ -183,11 +189,6 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
 	}
 	tcpStack.NextSocketID++
 	tcpStack.Sockets[sock.SID] = sock
-
-	const (
-		maxRetries    = 3
-		retryTimeout  = 3 * time.Second
-	)
 
 	// Initial SYN send
 	err := ipStack.sendTCPPacket(sock, []byte{}, header.TCPFlagSyn)
