@@ -8,6 +8,7 @@ import (
   "fmt"
   "time"
   "github.com/google/netstack/tcpip/header"
+  "math/rand"
 )
 
 type TCPStack struct {
@@ -89,21 +90,17 @@ func TCPPacketHandler(packet *Packet, args []interface{}) {
 
 func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack, tcpstack *TCPStack) error {
     //store previous packet data
-    sock.Listen.SrcAddr = packet.Header.Src
-    sock.Listen.DstAddr = packet.Header.Dst
-    sock.Listen.SrcPort = tcpHdr.SrcPort
-    sock.Listen.SeqNum = tcpHdr.SeqNum
 
     //add new socket to socket table
     l := sock.Listen
-
+    seqNum := rand.Uint32()%100 * 1000
     new_Connection := &VTCPConn{
         State: 2,
         LocalAddr: packet.Header.Dst,
         LocalPort: l.LocalPort,
         RemoteAddr: packet.Header.Src,
         RemotePort: tcpHdr.SrcPort,
-        SeqNum: uint32(time.Now().UnixNano()),
+        SeqNum: seqNum,
         AckNum: tcpHdr.SeqNum + 1,
         Window: NewWindow(65535),
     }
@@ -136,8 +133,10 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 // Also modify handleSynAckReceived to initialize RecvNext
 func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) error {
     sock.Conn.State = 3
+    sock.Conn.SeqNum = tcpHdr.AckNum
     sock.Conn.AckNum = tcpHdr.SeqNum + 1
-    sock.Conn.Window.RecvNext = tcpHdr.SeqNum + 1  // Add this line
+    sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
+    sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
     
     fmt.Printf("Debug - Initialized RecvNext to %d\n", sock.Conn.Window.RecvNext)
     fmt.Println("SYN-ACK received, connection established")
@@ -153,6 +152,8 @@ func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields,
 func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
   fmt.Println("ACK received, connection established")
   sock.Conn.State = 3
+  sock.Conn.Window.RecvNext = tcpHdr.SeqNum
+  sock.Conn.Window.RecvLBR = tcpHdr.SeqNum
   //sock.Conn.AckNum = tcpHdr.SeqNum + 1
 }
 
@@ -169,6 +170,7 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
     if len(payload) > 0 {
         fmt.Printf("Payload contents: %s\n", string(payload))
     }
+    sock.Conn.SeqNum = tcpHdr.AckNum
     
     if len(payload) > 0 {
         fmt.Printf("Debug - Current state before processing: RecvNext=%d, RecvLBR=%d, AckNum=%d\n",
@@ -222,34 +224,22 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error {
     var tcpHdr header.TCPFields
     var localAddr, remoteAddr netip.Addr
-
-    if sock.Listen != nil {
-        // This is a listening socket - use Listen field
-        tcpHdr = header.TCPFields{
-            SrcPort:    sock.Listen.LocalPort,
-            DstPort:    sock.Listen.SrcPort,  // Use info from last received packet
-            SeqNum:     uint32(time.Now().UnixNano()),  // Generate new seq for SYN-ACK
-            AckNum:     sock.Listen.SeqNum + 1,
-            DataOffset: 20,
-            Flags:      flags,
-            WindowSize: 65535,  // Default window size
-        }
-        localAddr = sock.Listen.DstAddr
-        remoteAddr = sock.Listen.SrcAddr
-    } else {
-        // Normal connected socket - use Conn field
-        tcpHdr = header.TCPFields{
-            SrcPort:    sock.Conn.LocalPort,
-            DstPort:    sock.Conn.RemotePort,
-            SeqNum:     sock.Conn.SeqNum,
-            AckNum:     sock.Conn.AckNum,
-            DataOffset: 20,
-            Flags:      flags,
-            WindowSize: 65535,  // Default window size
-        }
-        localAddr = sock.Conn.LocalAddr
-        remoteAddr = sock.Conn.RemoteAddr
+    if sock.Conn == nil {
+        return fmt.Errorf("can't send via listen socket")
     }
+        // Normal connected socket - use Conn field
+    tcpHdr = header.TCPFields{
+        SrcPort:    sock.Conn.LocalPort,
+        DstPort:    sock.Conn.RemotePort,
+        SeqNum:     sock.Conn.SeqNum,
+        AckNum:     sock.Conn.AckNum,
+        DataOffset: 20,
+        Flags:      flags,
+        WindowSize: 65535,  // Default window size
+    }
+    localAddr = sock.Conn.LocalAddr
+    remoteAddr = sock.Conn.RemoteAddr
+    
 
     // Create TCP header bytes and compute checksum
     checksum := iptcp_utils.ComputeTCPChecksum(&tcpHdr, localAddr, remoteAddr, nil)

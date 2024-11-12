@@ -233,7 +233,11 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
       fmt.Println(int(sid))
 
       //this is so cursed wtf is this
-      bytesWritten, err := tcpstack.Sockets[int(sid)].Conn.VWrite(messageBytes, stack, tcpstack.Sockets[int(sid)])
+	  conn := tcpstack.Sockets[int(sid)].Conn
+	  if conn == nil {
+		continue
+	  }
+      bytesWritten, err := conn.VWrite(messageBytes, stack, tcpstack.Sockets[int(sid)])
       if err != nil {
         fmt.Println(err)
         continue
@@ -263,7 +267,24 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         continue
       }
       fmt.Println("Read", numBytes, "bytes: ", string(buf))
-    }
+    } else if strings.HasPrefix(input, "v") {
+		parts := strings.SplitN(input, " ", 2)
+		if len(parts) != 2 {
+			fmt.Println("Usage: sock <sid>")
+			continue
+		}
+		sid, err := strconv.Atoi(parts[1])
+		if err != nil {
+			fmt.Printf("Invalid socket ID: %v\n", err)
+			continue
+		}
+		fmt.Println(tcpstack.Sockets[int(sid)].Conn)
+		if tcpstack.Sockets[int(sid)].Conn != nil{
+		fmt.Println(tcpstack.Sockets[int(sid)].Conn.Window)
+		}
+	}
+	
+
 	}
 }
 

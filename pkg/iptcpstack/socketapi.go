@@ -59,10 +59,6 @@ type VTCPListener struct {
 	Closed      bool
 
 	// Info about previous packet
-	SrcAddr netip.Addr
-	DstAddr netip.Addr
-	SrcPort uint16
-	SeqNum  uint32
 }
 
 func NewWindow(size int) *Window {
@@ -122,21 +118,25 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error
 
     // Check available space in send window
     availSpace := int(c.Window.SendWindowSize - (c.Window.SendLBW - c.Window.SendUna))
+	fmt.Errorf("flag")
     if availSpace <= 0 {
         return 0, fmt.Errorf("send buffer full")
     }
+	fmt.Errorf("flag")
 
     writeLen := len(data)
     if writeLen > availSpace {
         writeLen = availSpace
     }
 
+	fmt.Errorf("flag")
     // Write to send buffer
     n, err := c.Window.sendBuffer.Write(data[:writeLen])
     if err != nil {
         return 0, fmt.Errorf("failed to write to send buffer: %v", err)
     }
 
+	fmt.Errorf("flag")
     c.Window.SendLBW += uint32(n)
     
     // Send the data
@@ -166,15 +166,16 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
 
 	// Create new socket
 	localPort := uint16(rand.Uint32() >> 16)
+	seqNum := rand.Uint32()%100 * 1000
 	conn := &VTCPConn{
 		State:      SynSent,
 		LocalAddr:  localAddr,
 		LocalPort:  localPort,
 		RemoteAddr: addr,
 		RemotePort: port,
-		SeqNum:     uint32(time.Now().UnixNano()),
+		SeqNum:     seqNum,
 		AckNum:     0,
-		Window:     NewWindow(65535),
+		Window: NewWindow(65535),
 	}
 	sock := &Socket{
 		SID:  tcpStack.NextSocketID,
