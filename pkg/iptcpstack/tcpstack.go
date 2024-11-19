@@ -103,6 +103,7 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
         SeqNum: seqNum,
         AckNum: tcpHdr.SeqNum + 1,
         Window: NewWindow(65535),
+        SID: tcpstack.NextSocketID,
     }
     
     // Initialize window tracking - for first data packet, we expect the original sequence number
@@ -207,7 +208,7 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
   sock.Conn.Window.RecvNext = tcpHdr.SeqNum
   sock.Conn.Window.RecvLBR = tcpHdr.SeqNum
 
-  sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
+  //sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
 
   //sock.Conn.AckNum = tcpHdr.SeqNum + 1
 }

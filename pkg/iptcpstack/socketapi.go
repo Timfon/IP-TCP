@@ -118,6 +118,7 @@ type VTCPConn struct {
 	AckNum     uint32
 
 	Window *Window
+  SID int
 }
 
 type VTCPListener struct {
@@ -153,7 +154,6 @@ func (c *VTCPConn) VRead(buf []byte) (int, error) {
     availData := int(c.Window.RecvNext - c.Window.RecvLBR)
     fmt.Printf("Debug - Available data: %d (RecvNext: %d, RecvLBR: %d)\n", 
               availData, c.Window.RecvNext, c.Window.RecvLBR)
-              
     if availData > 0 {
         // Read from receive buffer
         readLen := len(buf)
@@ -217,13 +217,13 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error
         return 0, fmt.Errorf("failed to send data: %v", err)
     }
 
-    entry := &RetransmissionEntry{
-      Data: data[:writeLen],
-      SeqNum: c.SeqNum,
-      SendTime: time.Now(),
-      RTO: 1 * time.Second,
-    }
-    c.Window.RetransmissionQueue.Entries = append(c.Window.RetransmissionQueue.Entries, entry)
+    // entry := &RetransmissionEntry{
+    //   Data: data[:writeLen],
+    //   SeqNum: c.SeqNum,
+    //   SendTime: time.Now(),
+    //   RTO: 1 * time.Second,
+    // }
+    // c.Window.RetransmissionQueue.Entries = append(c.Window.RetransmissionQueue.Entries, entry)
 
     return n, nil
 }
@@ -273,6 +273,7 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
 		SeqNum:     seqNum,
 		AckNum:     0,
 		Window: NewWindow(65535),
+    SID: tcpStack.NextSocketID,
 	}
 	sock := &Socket{
 		SID:  tcpStack.NextSocketID,
@@ -350,39 +351,93 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 }
 
 //sendfile and receive file should do the whole c connect and accept!
-func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16, tcpStack *TCPStack) error {
-  file, err := os.Open(filepath)
-  if err != nil {
-    return fmt.Errorf("failed to open file: %v", err)
-  }
-  defer file.Close()
-  conn, err := tcpStack.VConnect(destAddr, port, stack)
-  if err != nil {
-    return fmt.Errorf("failed to connect: %v", err)
-  }
-  //defer conn.VClose()
-  buf := make([]byte, 1024) // Chunk size
-  for {
-    n, err := file.Read(buf)
-    if err == io.EOF {
-      break
-    }
+func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16, tcpStack *TCPStack)(int, error) {
+    // Open the file
+    file, err := os.Open(filepath)
     if err != nil {
-      return fmt.Errorf("failed to read from file: %v", err)
+      return 0, fmt.Errorf("failed to open file: %v", err)
     }
+    defer file.Close()
 
-    //find the socket
-
-    _, err = conn.VWrite(buf[:n], stack, tcpStack.Sockets])
+    // Establish the TCP connection
+    conn, err := tcpStack.VConnect(destAddr, port, stack)
     if err != nil {
-      return fmt.Errorf("failed to write to connection: %v", err)
+      return 0, fmt.Errorf("failed to establish connection: %v", err)
     }
-  }
+    //defer conn.VClose() // Close connection after file transfer
 
+    buf := make([]byte, 1024) // Chunk size
+    var totalBytes int // Track total bytes written
 
+    for {
+        // Read from file
+        n, err := file.Read(buf)
+        if err == io.EOF {
+            break
+        }
+        if err != nil {
+          return 0, fmt.Errorf("failed to read from file: %v", err)
+        }
 
+        // Write to the connection
+        numBytes, err := conn.VWrite(buf[:n], stack, tcpStack.Sockets[conn.SID])
+        if err != nil {
+          return 0, fmt.Errorf("failed to write to connection: %v", err)
+        }
+
+        totalBytes += numBytes
+    }
+    return totalBytes, nil
 }
-func ReceiveFile(conn *VTCPConn, filepath string) error {
-  file, err := os.Create(filepath)
 
+//should do the whole accept and receive File
+func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStack) (int, error) {
+    // Create listening socket
+    listenConn, err := tcpStack.VListen(port)
+    if err != nil {
+        return 0, fmt.Errorf("failed to create listener: %v", err)
+    }
+    // Create or truncate the output file
+    file, err := os.Create(filepath)
+    if err != nil {
+        return 0, fmt.Errorf("failed to create file: %v", err)
+    }
+    defer file.Close()
+    // Accept a connection
+    conn, err := listenConn.VAccept()
+    if err != nil {
+        return 0, fmt.Errorf("failed to accept connection: %v", err)
+    }
+    // Read data in chunks and write to file
+    buf := make([]byte, 1024)
+    totalBytes := 0
+
+    for {
+        // Read from connection
+        n, err := conn.VRead(buf)
+        fmt.Println(buf[:n])
+        if err != nil {
+            if err.Error() == "read timeout" {
+                // If we timeout, assume transfer is complete
+                break
+            }
+            return totalBytes, fmt.Errorf("failed to read from connection: %v", err)
+        }
+
+        if n == 0 {
+            // No more data to read
+            break
+        }
+        // Write to file
+        written, err := file.Write(buf[:n])
+        if err != nil {
+            return totalBytes, fmt.Errorf("failed to write to file: %v", err)
+        }
+        totalBytes += written
+        // If we didn't fill the buffer, we might be done
+        if n < len(buf) {
+            break
+        }
+    }
+    return totalBytes, nil
 }
