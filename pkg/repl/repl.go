@@ -164,8 +164,6 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         fmt.Println(err)
         continue
       }
-
-
 		} else if strings.HasPrefix(input, "a") {
       parts := strings.SplitN(input, " ", 2)
       if len(parts) != 2 {
@@ -178,7 +176,30 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         continue
       }
       ACommand(uint16(port), tcpstack)
-    } else if strings.HasPrefix(input, "ls") {
+    } else if strings.HasPrefix(input, "sf") {
+    parts := strings.SplitN(input, " ", 4)
+    if len(parts) != 4 {
+      fmt.Println("Usage: sf <file path> <addr> <port>")
+      continue
+    }
+    filepath := parts[1]
+    destAddr, err := netip.ParseAddr(parts[2])
+    if err != nil {
+      fmt.Printf("Invalid IP address: %v\n", err)
+      continue
+    }
+    port, err := strconv.Atoi(parts[3])
+    if err != nil {
+      fmt.Printf("Invalid port number: %v\n", err)
+      continue
+    }
+    numBytes, err := iptcpstack.SendFile(stack, filepath, destAddr, uint16(port), tcpstack)
+    if err != nil {
+      fmt.Println(err)
+      continue
+    }
+    fmt.Printf("Sent %d bytes\n", numBytes)
+  } else if strings.HasPrefix(input, "ls") {
       w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
       fmt.Fprintln(w, "SID\tLAddr\tLPort\tRAddr\tRPort\tStatus")
       for _, sock := range tcpstack.Sockets {
@@ -244,7 +265,26 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
       }
       fmt.Printf("Wrote %d bytes\n", bytesWritten)
 
-    } else if strings.HasPrefix(input, "r") {
+    } else if strings.HasPrefix(input, "rf") {
+      parts := strings.SplitN(input, " ", 3)
+      if len(parts) != 3 {
+        fmt.Println("Usage: rf <dest_file> <port>")
+        continue
+      }
+      destFile := parts[1]
+      port, err := strconv.Atoi(parts[2])
+      if err != nil {
+        fmt.Printf("Invalid port number: %v\n", err)
+        continue
+      }
+      numBytes, err := iptcpstack.ReceiveFile(stack, destFile, uint16(port), tcpstack)
+      if err != nil {
+        fmt.Println(err)
+        continue
+      }
+      fmt.Printf("Received %d bytes\n", numBytes)
+  } else if strings.HasPrefix(input, "r") {
+
       parts := strings.SplitN(input, " ", 3)
       if len(parts) != 3 {
         fmt.Println("Usage: r <sid> <numBytes>")
@@ -252,7 +292,7 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
       }
       sid, err := strconv.Atoi(parts[1])
       if err != nil {
-        fmt.Printf("Invalid socket ID: %v\n", err)
+        fmt.Printf("rejrhjerhjeInvalid socket ID: %v\n", err)
         continue
       }
       numBytes, err := strconv.Atoi(parts[2])
@@ -282,9 +322,7 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
 		if tcpstack.Sockets[int(sid)].Conn != nil{
 		fmt.Println(tcpstack.Sockets[int(sid)].Conn.Window)
 		}
-	}
-	
-
+	}   
 	}
 }
 

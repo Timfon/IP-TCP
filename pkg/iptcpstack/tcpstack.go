@@ -103,6 +103,7 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
         SeqNum: seqNum,
         AckNum: tcpHdr.SeqNum + 1,
         Window: NewWindow(65535),
+        SID: tcpstack.NextSocketID,
     }
     
     // Initialize window tracking - for first data packet, we expect the original sequence number
@@ -133,14 +134,14 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 
     for {
 		// Check if we've been trying too long
-		if time.Since(startTime) > 30*time.Second {
-			return fmt.Errorf("connection timed out after 30 seconds")
-		}
+      if time.Since(startTime) > 30 * time.Second {
+        return fmt.Errorf("connection timed out after 30 seconds")
+      }
 
 		// Check if connection established
-		if sock.Conn.State == Established {
-			return nil
-		}
+		// if sock.Conn.State == Established {
+		// 	return nil
+		// }
 
 		// Check if it's time to retry
 		if time.Since(startTime) >= time.Duration(retries+1)*retryTimeout {
@@ -156,7 +157,6 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 			retries++
 		}
 	}
-
     return nil
 }
 
@@ -207,6 +207,9 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
   sock.Conn.State = 3
   sock.Conn.Window.RecvNext = tcpHdr.SeqNum
   sock.Conn.Window.RecvLBR = tcpHdr.SeqNum
+
+  //sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
+
   //sock.Conn.AckNum = tcpHdr.SeqNum + 1
 }
 
