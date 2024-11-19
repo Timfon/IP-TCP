@@ -282,7 +282,25 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
 		if tcpstack.Sockets[int(sid)].Conn != nil{
 		fmt.Println(tcpstack.Sockets[int(sid)].Conn.Window)
 		}
-	}
+	} else if strings.HasPrefix(input, "sf") {
+    parts := strings.SplitN(input, " ", 4)
+    if len(parts) != 4 {
+      fmt.Println("Usage: sf <file path> <addr> <port>")
+      continue
+    }
+    filepath := parts[1]
+    destAddr, err := netip.ParseAddr(parts[2])
+    if err != nil {
+      fmt.Printf("Invalid IP address: %v\n", err)
+      continue
+    }
+    port, err := strconv.Atoi(parts[3])
+    if err != nil {
+      fmt.Printf("Invalid port number: %v\n", err)
+      continue
+    }
+    iptcpstack.SendFile(stack, filepath, destAddr, uint16(port), tcpstack)
+  }
 	
 
 	}
