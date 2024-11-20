@@ -277,14 +277,18 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         fmt.Printf("Invalid port number: %v\n", err)
         continue
       }
-      numBytes, err := iptcpstack.ReceiveFile(stack, destFile, uint16(port), tcpstack)
-      if err != nil {
-        fmt.Println(err)
-        continue
-      }
-      fmt.Printf("Received %d bytes\n", numBytes)
-  } else if strings.HasPrefix(input, "r") {
 
+      go func() {
+        numBytes, err := iptcpstack.ReceiveFile(stack, destFile, uint16(port), tcpstack)
+        if err != nil {
+          fmt.Println(err)
+          return
+        }
+        fmt.Printf("Received %d bytes\n", numBytes)
+      }()
+      fmt.Println("File reception started in background")
+
+  } else if strings.HasPrefix(input, "r") {
       parts := strings.SplitN(input, " ", 3)
       if len(parts) != 3 {
         fmt.Println("Usage: r <sid> <numBytes>")
@@ -292,7 +296,7 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
       }
       sid, err := strconv.Atoi(parts[1])
       if err != nil {
-        fmt.Printf("rejrhjerhjeInvalid socket ID: %v\n", err)
+        fmt.Printf("Invalid socket ID: %v\n", err)
         continue
       }
       numBytes, err := strconv.Atoi(parts[2])
