@@ -358,7 +358,6 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
       return 0, fmt.Errorf("failed to open file: %v", err)
     }
     defer file.Close()
-
     // Establish the TCP connection
     conn, err := tcpStack.VConnect(destAddr, port, stack)
     if err != nil {
@@ -378,7 +377,6 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
         if err != nil {
           return 0, fmt.Errorf("failed to read from file: %v", err)
         }
-
         // Write to the connection
         numBytes, err := conn.VWrite(buf[:n], stack, tcpStack.Sockets[conn.SID])
         if err != nil {
@@ -415,7 +413,7 @@ func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStac
     for {
         // Read from connection
         n, err := conn.VRead(buf)
-        fmt.Println(buf[:n])
+        //fmt.Println(buf[:n])
         if err != nil {
             if err.Error() == "read timeout" {
                 // If we timeout, assume transfer is complete
@@ -426,6 +424,8 @@ func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStac
 
         if n == 0 {
             // No more data to read
+            fmt.Println(conn.Window.RecvNext)
+            fmt.Println(conn.Window.RecvLBR)
             break
         }
         // Write to file

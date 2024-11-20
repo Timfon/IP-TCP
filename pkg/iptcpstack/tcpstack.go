@@ -177,28 +177,28 @@ func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields,
         return fmt.Errorf("failed to send ACK packet: %v", err)
     }
 
-    startTime := time.Now()
-	retries := 0
+   //  startTime := time.Now()
+	  // retries := 0
 
-    for {
-		// Check if we've been trying too long
-		if time.Since(startTime) > 30*time.Second {
-			return fmt.Errorf("connection timed out after 30 seconds")
-		}
-		// Check if it's time to retry
-		if time.Since(startTime) >= time.Duration(retries+1)*retryTimeout {
-			if retries >= maxRetries {
-				return fmt.Errorf("connection failed after %d ACK retransmissions", maxRetries)
-			}
-
-			fmt.Printf("Retransmitting ACK (attempt %d/%d)\n", retries+1, maxRetries)
-			err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
-			if err != nil {
-				return fmt.Errorf("failed to retransmit ACK packet: %v", err)
-			}
-			retries++
-		}
-	}
+ //    for {
+	// 	// Check if we've been trying too long
+	// 	if time.Since(startTime) > 30*time.Second {
+	// 		return fmt.Errorf("connection timed out after 30 seconds")
+	// 	}
+	// 	// Check if it's time to retry
+	// 	if time.Since(startTime) >= time.Duration(retries+1)*retryTimeout {
+	// 		if retries >= maxRetries {
+	// 			return fmt.Errorf("connection failed after %d ACK retransmissions", maxRetries)
+	// 		}
+	//
+	// 		fmt.Printf("Retransmitting ACK (attempt %d/%d)\n", retries+1, maxRetries)
+	// 		err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+	// 		if err != nil {
+	// 			return fmt.Errorf("failed to retransmit ACK packet: %v", err)
+	// 		}
+	// 		retries++
+	// 	}
+	// }
     return nil
 }
 
@@ -283,7 +283,7 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
     if sock.Conn == nil {
         return fmt.Errorf("can't send via listen socket")
     }
-    fmt.Printf("Data %+v\n", data)
+    //fmt.Printf("Data %+v\n", data)
         // Normal connected socket - use Conn field
     tcpHdr = header.TCPFields{
         SrcPort:    sock.Conn.LocalPort,
