@@ -164,6 +164,7 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         fmt.Println(err)
         continue
       }
+      fmt.Println(tcpstack.Listeners)
 		} else if strings.HasPrefix(input, "a") {
       parts := strings.SplitN(input, " ", 2)
       if len(parts) != 2 {
@@ -175,7 +176,8 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         fmt.Printf("Invalid port number: %v\n", err)
         continue
       }
-      ACommand(uint16(port), tcpstack)
+      iptcpstack.ACommand(uint16(port), tcpstack)
+      fmt.Println(tcpstack.Listeners)
     } else if strings.HasPrefix(input, "sf") {
     parts := strings.SplitN(input, " ", 4)
     if len(parts) != 4 {
@@ -256,7 +258,7 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
       //this is so cursed wtf is this
 	  conn := tcpstack.Sockets[int(sid)].Conn
 	  if conn == nil {
-		continue
+		  continue
 	  }
       bytesWritten, err := conn.VWrite(messageBytes, stack, tcpstack.Sockets[int(sid)])
       if err != nil {
@@ -264,7 +266,6 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         continue
       }
       fmt.Printf("Wrote %d bytes\n", bytesWritten)
-
     } else if strings.HasPrefix(input, "rf") {
       parts := strings.SplitN(input, " ", 3)
       if len(parts) != 3 {
@@ -277,7 +278,6 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         fmt.Printf("Invalid port number: %v\n", err)
         continue
       }
-
       go func() {
         numBytes, err := iptcpstack.ReceiveFile(stack, destFile, uint16(port), tcpstack)
         if err != nil {
@@ -287,7 +287,6 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         fmt.Printf("Received %d bytes\n", numBytes)
       }()
       fmt.Println("File reception started in background")
-
   } else if strings.HasPrefix(input, "r") {
       parts := strings.SplitN(input, " ", 3)
       if len(parts) != 3 {
@@ -330,25 +329,3 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
 	}
 }
 
-func ACommand(port uint16, tcpstack *iptcpstack.TCPStack) {
-    // Create listening socket
-    listenConn, err := tcpstack.VListen(port)
-    if err != nil {
-        fmt.Println(err)
-        return
-    }
-    // Start a goroutine to continuously accept connections
-    go func() {
-        for {
-            conn, err := listenConn.VAccept()
-            if err != nil {
-              // TODO: If the listener is closed, exit the goroutine
-                fmt.Println(err)
-                continue
-            }
-            // The connection is now established and ready for use by other REPL commands
-            // We don't need to do anything else with it here
-            listenConn.AcceptQueue <- conn
-        }
-    }()
-}

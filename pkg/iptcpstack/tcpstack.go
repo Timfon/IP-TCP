@@ -16,6 +16,8 @@ type TCPStack struct {
   TcpRtoMax time.Duration
   Sockets map[int]*Socket
   NextSocketID int
+
+  Listeners    map[uint16]*VTCPListener
 }
 
 func InitializeTCP(config *lnxconfig.IPConfig) (*TCPStack, error){
@@ -24,6 +26,8 @@ func InitializeTCP(config *lnxconfig.IPConfig) (*TCPStack, error){
     TcpRtoMax: config.TcpRtoMax,
     Sockets: make(map[int]*Socket),
     NextSocketID: 0,
+
+    Listeners: make(map[uint16]*VTCPListener),
   }
   return TcpStack, nil
 }
@@ -93,7 +97,7 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 
     //add new socket to socket table
     l := sock.Listen
-    seqNum := rand.Uint32()%100 * 1000
+    seqNum := rand.Uint32() % 100 * 1000
     new_Connection := &VTCPConn{
         State: 2,
         LocalAddr: packet.Header.Dst,
@@ -105,6 +109,10 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
         Window: NewWindow(65535),
         SID: tcpstack.NextSocketID,
     }
+
+    //maybe plz
+    l.AcceptQueue <- new_Connection
+
     
     // Initialize window tracking - for first data packet, we expect the original sequence number
     new_Connection.Window.RecvNext = tcpHdr.SeqNum
@@ -215,27 +223,27 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 
 // Simplify handleEstablished to just handle in-order data
 func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
-    fmt.Println("=== handleEstablished called ===")
-    fmt.Printf("TCP Header: %+v\n", tcpHdr)
-    fmt.Printf("Packet: %+v\n", packet.Body)
+    //fmt.Println("=== handleEstablished called ===")
+    // fmt.Printf("TCP Header: %+v\n", tcpHdr)
+    // fmt.Printf("Packet: %+v\n", packet.Body)
     payloadOffset := int(tcpHdr.DataOffset)
     payload := packet.Body[payloadOffset:]
     
-    fmt.Printf("Payload offset: %d\n", payloadOffset)
-    fmt.Printf("Payload length: %d\n", len(payload))
+    // fmt.Printf("Payload offset: %d\n", payloadOffset)
+    // fmt.Printf("Payload length: %d\n", len(payload))
     if len(payload) > 0 {
-        fmt.Printf("Payload contents: %s\n", string(payload))
+        // fmt.Printf("Payload contents: %s\n", string(payload))
     }
     sock.Conn.SeqNum = tcpHdr.AckNum
     
     if len(payload) > 0 {
-        fmt.Printf("Debug - Current state before processing: RecvNext=%d, RecvLBR=%d, AckNum=%d\n",
-                  sock.Conn.Window.RecvNext,
-                  sock.Conn.Window.RecvLBR,
-                  sock.Conn.AckNum)
+        // fmt.Printf("Debug - Current state before processing: RecvNext=%d, RecvLBR=%d, AckNum=%d\n",
+        //           sock.Conn.Window.RecvNext,
+        //           sock.Conn.Window.RecvLBR,
+        //           sock.Conn.AckNum)
                   
         if tcpHdr.SeqNum == sock.Conn.Window.RecvNext {
-            fmt.Println("Debug - Processing packet")
+            // fmt.Println("Debug - Processing packet")
             
             // Write to receive buffer
             n, err := sock.Conn.Window.recvBuffer.Write(payload)
@@ -274,7 +282,7 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
                       sock.Conn.Window.RecvNext, tcpHdr.SeqNum)
         }
     }
-    fmt.Println("=== handleEstablished finished ===\n")
+    // fmt.Println("=== handleEstablished finished ===\n")
 }
 
 func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error {
