@@ -269,23 +269,26 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
                 fmt.Println("Channel already has signal, skipped")
             }
 
-            for {
-                early := heap.Pop(sock.Conn.ReceiveQueue).(*Item)
-                if early.priority == sock.Conn.Window.RecvNext {
-                    n, err := sock.Conn.Window.recvBuffer.Write(early.value)
-                    if err != nil {
-                        fmt.Printf("Error writing to receive buffer: %v\n", err)
-                        return
+            // Check if ReceiveQueue exists and has items before processing
+            if sock.Conn.ReceiveQueue != nil && sock.Conn.ReceiveQueue.Len() > 0 {
+                for sock.Conn.ReceiveQueue.Len() > 0 {
+                    early := heap.Pop(sock.Conn.ReceiveQueue).(*Item)
+                    if early.priority == sock.Conn.Window.RecvNext {
+                        n, err := sock.Conn.Window.recvBuffer.Write(early.value)
+                        if err != nil {
+                            fmt.Printf("Error writing to receive buffer: %v\n", err)
+                            return
+                        }
+                        fmt.Printf("Debug - Wrote %d bytes from queue to receive buffer\n", n)
+                        
+                        sock.Conn.Window.RecvNext += uint32(len(early.value))
+                        sock.Conn.AckNum = sock.Conn.Window.RecvNext
+                    } else if early.priority > sock.Conn.Window.RecvNext {
+                        heap.Push(sock.Conn.ReceiveQueue, early)
+                        break
                     }
-                    fmt.Printf("Debug - Wrote %d bytes to receive buffer\n", n)
-                    
-                    sock.Conn.Window.RecvNext += uint32(len(early.value))
-                    sock.Conn.AckNum = sock.Conn.Window.RecvNext
-                } else if early.priority > sock.Conn.Window.RecvNext {
-                    heap.Push(sock.Conn.ReceiveQueue, early)
-                    break
                 }
-            }      
+            }
             // Send ACK
             err = stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
             if err != nil {
@@ -300,10 +303,14 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
                       // sock.Conn.AckNum)
         } else {
             //
+            if sock.Conn.ReceiveQueue == nil {
+                sock.Conn.ReceiveQueue = &PriorityQueue{}
+                heap.Init(sock.Conn.ReceiveQueue)
+            }
             fmt.Printf("Early Arrival packet - adding to queue")
             entry:= &Item{
                 value: payload,
-                priority: sock.Conn.Window.RecvNext,
+                priority: tcpHdr.SeqNum,  //sock.Conn.Window.RecvNext, // maybe use the actual sequence number, not recv next?
             }
             heap.Push(sock.Conn.ReceiveQueue, entry)
     }
@@ -311,7 +318,6 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 }else {
     fmt.Println("Received return ACK")
 }
-
 }
 
 func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error {
