@@ -176,7 +176,6 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         continue
       }
       iptcpstack.ACommand(uint16(port), tcpstack)
-      fmt.Println(tcpstack.Listeners)
     } else if strings.HasPrefix(input, "sf") {
     parts := strings.SplitN(input, " ", 4)
     if len(parts) != 4 {
@@ -252,7 +251,6 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
           continue
       }
       messageBytes := []byte(parts[2])
-      fmt.Println(int(sid))
 
       //this is so cursed wtf is this
 	  conn := tcpstack.Sockets[int(sid)].Conn
@@ -320,7 +318,6 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
 			fmt.Printf("Invalid socket ID: %v\n", err)
 			continue
 		}
-		fmt.Println(tcpstack.Sockets[int(sid)].Conn)
 		if tcpstack.Sockets[int(sid)].Conn != nil{
 		fmt.Println(tcpstack.Sockets[int(sid)].Conn.Window)
 		}
