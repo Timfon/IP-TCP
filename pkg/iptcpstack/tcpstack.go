@@ -85,8 +85,38 @@ func TCPPacketHandler(packet *Packet, args []interface{}) {
             handleAckReceived(sock, packet, tcpHdr, stack, tcpStack)
         }
     case 3:
-        handleEstablished(sock, packet, tcpHdr, stack)
+        if tcpHdr.Flags & header.TCPFlagAck != 0 {
+            handleEstablished(sock, packet, tcpHdr, stack)
+        }
+        if tcpHdr.Flags & header.TCPFlagFin != 0 {
+            finWaitTearDown(sock, packet, tcpHdr, stack)
+        }
+    case 4:
+        if tcpHdr.Flags & header.TCPFlagAck != 0 {
+            handleFinWait1(sock, packet, tcpHdr, stack)
+        }
+    case 5:
+        if tcpHdr.Flags & header.TCPFlagAck != 0 {
+            handleFinWait2(sock, packet, tcpHdr, stack)
+        }
+        if tcpHdr.Flags & header.TCPFlagFin != 0 {
+            finWaitTearDown(sock, packet, tcpHdr, stack)
+        }
+    case 6:
+        if tcpHdr.Flags & header.TCPFlagAck != 0 {
+            handleCloseWait(sock, packet, tcpHdr, stack)
+        }
+    case 7:
+        if tcpHdr.Flags & header.TCPFlagFin != 0 {
+            handleTimeWait(sock, packet, tcpHdr, stack)
+        }
+    case 8:
+        if tcpHdr.Flags & header.TCPFlagAck != 0 {
+            recvTearDown(sock, packet, tcpHdr, stack, tcpStack)
+        }
     }
+
+    
 }
 
 func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack, tcpstack *TCPStack) error {
@@ -232,6 +262,75 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
     fmt.Println("Received return ACK")
 }
 
+
+}
+
+
+func handleFinWait1(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
+    sock.Conn.State = 5
+    sock.Conn.SeqNum = tcpHdr.AckNum
+    sock.Conn.AckNum = tcpHdr.SeqNum + 1
+    sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
+    sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
+}
+
+func handleFinWait2(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
+    //basically just accepts ack messages here
+
+}
+
+func finWaitTearDown(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) error{
+    //takes a fin and sends an ACK
+    sock.Conn.State = 7
+    sock.Conn.SeqNum = tcpHdr.AckNum
+    sock.Conn.AckNum = tcpHdr.SeqNum + 1
+    sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
+    sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
+    
+    // fmt.Printf("Debug - Initialized RecvNext to %d\n", sock.Conn.Window.RecvNext)
+    fmt.Println("FIN received, entering Time Wait")
+    
+    // Send ACK
+    err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+    if err != nil {
+        return fmt.Errorf("failed to send ACK packet: %v", err)
+    }
+    return nil
+}
+
+func handleTimeWait(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) error{
+    sock.Conn.SeqNum = tcpHdr.AckNum
+    sock.Conn.AckNum = tcpHdr.SeqNum + 1
+    sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
+    sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
+    
+    // fmt.Printf("Debug - Initialized RecvNext to %d\n", sock.Conn.Window.RecvNext)
+    fmt.Println("FIN received, Transmitting ACK For Confirmation and Closing")
+    
+    // Send ACK
+    err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+    if err != nil {
+        return fmt.Errorf("failed to send ACK packet: %v", err)
+    }
+    return nil
+}
+
+func handleCloseWait(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
+    //literally just kinda stays there
+    sock.Conn.SeqNum = tcpHdr.AckNum
+    sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
+    fmt.Println("ACK Received")
+
+}
+
+func recvTearDown(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack, tcpStack *TCPStack){
+    //
+    sock.Conn.SeqNum = tcpHdr.AckNum
+    sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
+    fmt.Println("Final ACK Received, deleting TCB")
+    
+    //prob
+    delete(tcpStack.Sockets, sock.SID)
 
 }
 
