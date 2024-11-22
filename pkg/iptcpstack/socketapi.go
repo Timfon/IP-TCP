@@ -70,7 +70,6 @@ type VTCPListener struct {
 	AcceptQueue chan *VTCPConn
 	LocalPort   uint16
 	Closed      bool
-
 	// Info about previous packet
 }
 
@@ -127,7 +126,7 @@ func (c *VTCPConn) VRead(buf []byte) (int, error) {
     select {
     case <-c.Window.DataAvailable:
         fmt.Println("Debug - Received data notification")
-        return c.VRead(buf)  // Try reading again
+        return c.VRead(buf)  
     }
 }
 
@@ -164,21 +163,11 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error
     c.Window.SendLBW += uint32(n)
     // Add to retransmission queue
     c.Window.RetransmissionQueue.AddEntry(data[:writeLen], c.SeqNum)
-
     // Send the data
     err = stack.sendTCPPacket(sock, data[:writeLen], header.TCPFlagAck)
     if err != nil {
         return 0, fmt.Errorf("failed to send data: %v", err)
     }
-
-    // entry := &RetransmissionEntry{
-    //   Data: data[:writeLen],
-    //   SeqNum: c.SeqNum,
-    //   SendTime: time.Now(),
-    //   RTO: 1 * time.Second,
-    // }
-    // c.Window.RetransmissionQueue.Entries = append(c.Window.RetransmissionQueue.Entries, entry)
-
     return n, nil
 }
 
@@ -309,12 +298,6 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
     }
 }
 
-
-
-
-
-
-
 func ACommand(port uint16, tcpstack *TCPStack){
     // Create listening socket
     listenConn, err := tcpstack.VListen(port)
@@ -423,8 +406,8 @@ func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStac
     //readDeadline := time.Now().Add(30 * time.Second)
     for {//time.Now().Before(readDeadline) {
         fmt.Printf("Before read - SeqNum: %d, AckNum: %d\n", conn.SeqNum, conn.AckNum)
-        
         n, err := conn.VRead(buf)
+        fmt.Println("Buffer contents:", string(buf[:n]))
         if err != nil {
             if err.Error() == "read timeout" {
                 fmt.Println("Read timeout reached")
