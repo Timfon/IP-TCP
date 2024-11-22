@@ -123,34 +123,6 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
         return fmt.Errorf("failed to send SYN-ACK packet: %v", err)
     }
 
- //    startTime := time.Now()
-	// retries := 0
-
- //    for {
-	// 	// Check if we've been trying too long
- //      if time.Since(startTime) > 30 * time.Second {
- //        return fmt.Errorf("connection timed out after 30 seconds")
- //      }
-	//
-	// 	// Check if connection established
-	// 	// if sock.Conn.State == Established {
-	// 	// 	return nil
-	// 	// }
-	//
-	// 	// Check if it's time to retry
-	// 	if time.Since(startTime) >= time.Duration(retries+1)*retryTimeout {
-	// 		if retries >= maxRetries {
-	// 			return fmt.Errorf("connection failed after %d SYN-ACK retransmissions", maxRetries)
-	// 		}
-	//
-	// 		fmt.Printf("Retransmitting SYN (attempt %d/%d)\n", retries+1, maxRetries)
-	// 		err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagSyn | header.TCPFlagAck)
-	// 		if err != nil {
-	// 			return fmt.Errorf("failed to retransmit SYN-ACK packet: %v", err)
-	// 		}
-	// 		retries++
-	// 	}
-	// }
     return nil
 }
 
@@ -161,38 +133,13 @@ func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields,
     sock.Conn.AckNum = tcpHdr.SeqNum + 1
     sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
     sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
-    
     // fmt.Printf("Debug - Initialized RecvNext to %d\n", sock.Conn.Window.RecvNext)
     fmt.Println("SYN-ACK received, connection established")
-    
     // Send ACK
     err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
     if err != nil {
         return fmt.Errorf("failed to send ACK packet: %v", err)
     }
-
-   //  startTime := time.Now()
-	  // retries := 0
-
- //    for {
-	// 	// Check if we've been trying too long
-	// 	if time.Since(startTime) > 30*time.Second {
-	// 		return fmt.Errorf("connection timed out after 30 seconds")
-	// 	}
-	// 	// Check if it's time to retry
-	// 	if time.Since(startTime) >= time.Duration(retries+1)*retryTimeout {
-	// 		if retries >= maxRetries {
-	// 			return fmt.Errorf("connection failed after %d ACK retransmissions", maxRetries)
-	// 		}
-	//
-	// 		fmt.Printf("Retransmitting ACK (attempt %d/%d)\n", retries+1, maxRetries)
-	// 		err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
-	// 		if err != nil {
-	// 			return fmt.Errorf("failed to retransmit ACK packet: %v", err)
-	// 		}
-	// 		retries++
-	// 	}
-	// }
     return nil
 }
 
@@ -209,45 +156,18 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
           break
       }
   }
-
-  // Also need to update state in the listener's AcceptQueue connection
-    // if sock.Listen != nil && sock.Listen.AcceptQueue != nil {
-    //     select {
-    //     case conn := <-sock.Listen.AcceptQueue:
-    //         conn.State = Established
-    //         // Put it back in the queue
-    //         sock.Listen.AcceptQueue <- conn
-    //     default:
-    //         // Queue is empty, nothing to update
-    //     }
-    // }
-
-  //sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
-
-  //sock.Conn.AckNum = tcpHdr.SeqNum + 1
 }
 
 // Simplify handleEstablished to just handle in-order data
 func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
-    //fmt.Println("=== handleEstablished called ===")
-    // fmt.Printf("TCP Header: %+v\n", tcpHdr)
-    // fmt.Printf("Packet: %+v\n", packet.Body)
     payloadOffset := int(tcpHdr.DataOffset)
     payload := packet.Body[payloadOffset:]
-    
-    // fmt.Printf("Payload offset: %d\n", payloadOffset)
-    // fmt.Printf("Payload length: %d\n", len(payload))
     if len(payload) > 0 {
         // fmt.Printf("Payload contents: %s\n", string(payload))
     }
     sock.Conn.SeqNum = tcpHdr.AckNum
     
     if len(payload) > 0 {
-        // fmt.Printf("Debug - Current state before processing: RecvNext=%d, RecvLBR=%d, AckNum=%d\n",
-        //           sock.Conn.Window.RecvNext,
-        //           sock.Conn.Window.RecvLBR,
-        //           sock.Conn.AckNum)
-                  
         if tcpHdr.SeqNum == sock.Conn.Window.RecvNext {
             // Write to receive buffer
             _, err := sock.Conn.Window.recvBuffer.Write(payload)
@@ -255,8 +175,6 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
                 fmt.Printf("Error writing to receive buffer: %v\n", err)
                 return
             }
-            // fmt.Printf("Debug - Wrote %d bytes to receive buffer\n", n)
-            
             // Update sequence tracking
             sock.Conn.Window.RecvNext += uint32(len(payload))
             sock.Conn.AckNum = sock.Conn.Window.RecvNext
@@ -289,6 +207,7 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
                     }
                 }
             }
+
             // Send ACK
             err = stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
             if err != nil {
@@ -296,13 +215,8 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
             } else {
                 fmt.Println("Successfully sent ACK")
             }
-            
-            // fmt.Printf("Debug - Updated state: RecvNext=%d, RecvLBR=%d, AckNum=%d\n",
-                      // sock.Conn.Window.RecvNext,
-                      // sock.Conn.Window.RecvLBR,
-                      // sock.Conn.AckNum)
+
         } else {
-            //
             if sock.Conn.ReceiveQueue == nil {
                 sock.Conn.ReceiveQueue = &PriorityQueue{}
                 heap.Init(sock.Conn.ReceiveQueue)
@@ -314,10 +228,11 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
             }
             heap.Push(sock.Conn.ReceiveQueue, entry)
     }
-    // fmt.Println("=== handleEstablished finished ===\n")
-}else {
+} else {
     fmt.Println("Received return ACK")
 }
+
+
 }
 
 func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error {

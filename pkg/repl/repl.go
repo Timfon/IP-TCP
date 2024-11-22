@@ -253,10 +253,11 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
       messageBytes := []byte(parts[2])
 
       //this is so cursed wtf is this
+      if tcpstack.Sockets[int(sid)] == nil {
+        fmt.Println("Socket doesn't exist")
+        continue
+      }
 	  conn := tcpstack.Sockets[int(sid)].Conn
-	  if conn == nil {
-		  continue
-	  }
       bytesWritten, err := conn.VWrite(messageBytes, stack, tcpstack.Sockets[int(sid)])
       if err != nil {
         fmt.Println(err)
@@ -301,6 +302,11 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         continue
       }
       buf := make([]byte, numBytes)
+
+      if tcpstack.Sockets[int(sid)] == nil {
+        fmt.Println("Socket doesn't exist")
+        continue
+      }
       _, err = tcpstack.Sockets[int(sid)].Conn.VRead(buf)
       if err != nil {
         fmt.Println(err)
