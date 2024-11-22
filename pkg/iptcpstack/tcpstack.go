@@ -9,6 +9,7 @@ import (
   "time"
   "github.com/google/netstack/tcpip/header"
   "math/rand"
+  "container/heap"
 )
 
 type TCPStack struct {
@@ -283,7 +284,24 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
             default: 
                 fmt.Println("Channel already has signal, skipped")
             }
-            
+
+            for {
+                early := heap.Pop(sock.Conn.ReceiveQueue).(*Item)
+                if early.priority == sock.Conn.Window.RecvNext {
+                    n, err := sock.Conn.Window.recvBuffer.Write(early.value)
+                    if err != nil {
+                        fmt.Printf("Error writing to receive buffer: %v\n", err)
+                        return
+                    }
+                    fmt.Printf("Debug - Wrote %d bytes to receive buffer\n", n)
+                    
+                    sock.Conn.Window.RecvNext += uint32(len(early.value))
+                    sock.Conn.AckNum = sock.Conn.Window.RecvNext
+                } else if early.priority > sock.Conn.Window.RecvNext {
+                    heap.Push(sock.Conn.ReceiveQueue, early)
+                    break
+                }
+            }      
             // Send ACK
             err = stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
             if err != nil {
@@ -297,11 +315,19 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
                       sock.Conn.Window.RecvLBR,
                       sock.Conn.AckNum)
         } else {
-            fmt.Printf("Sequence number mismatch - Expected: %d, Got: %d\n",
-                      sock.Conn.Window.RecvNext, tcpHdr.SeqNum)
-        }
+            //
+            fmt.Printf("Early Arrival packet - adding to queue")
+            entry:= &Item{
+                value: payload,
+                priority: sock.Conn.Window.RecvNext,
+            }
+            heap.Push(sock.Conn.ReceiveQueue, entry)
     }
     // fmt.Println("=== handleEstablished finished ===\n")
+}else {
+    fmt.Println("Received return ACK")
+}
+
 }
 
 func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error {
