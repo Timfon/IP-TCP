@@ -54,7 +54,6 @@ func (rq *RetransmissionQueue) AddEntry(data []byte, seqNum uint32) {
 func (rq *RetransmissionQueue) RemoveAckedEntries(ackNum uint32) {
   rq.mutex.Lock()
   defer rq.mutex.Unlock()
-
   for i := 0; i < len(rq.Entries); i++ {
     if rq.Entries[i].SeqNum < ackNum {
       rq.Entries = append(rq.Entries[:i], rq.Entries[i+1:]...)
@@ -161,8 +160,8 @@ func (c *VTCPConn) VRead(buf []byte) (int, error) {
 
     // Calculate available data using TCP sequence numbers
     availData := int(c.Window.RecvNext - c.Window.RecvLBR)
-    fmt.Printf("Debug - Available data: %d (RecvNext: %d, RecvLBR: %d)\n", 
-              availData, c.Window.RecvNext, c.Window.RecvLBR)
+    // fmt.Printf("Debug - Available data: %d (RecvNext: %d, RecvLBR: %d)\n", 
+    //           availData, c.Window.RecvNext, c.Window.RecvLBR)
 
     if availData > 0 {
         // Read from receive buffer
@@ -183,12 +182,12 @@ func (c *VTCPConn) VRead(buf []byte) (int, error) {
     }
     
     // No data available, wait for more
-    fmt.Println("Debug - No data available, waiting...")
+    // fmt.Println("Debug - No data available, waiting...")
     select {
     case <-c.Window.DataAvailable:
         fmt.Println("Debug - Received data notification")
         return c.VRead(buf)  // Try reading again
-    case <-time.After(5 * time.Second):  // Shorter timeout for individual reads
+    case <-time.After(30 * time.Second):  // Shorter timeout for individual reads
         return 0, fmt.Errorf("read timeout")
     }
 }
@@ -332,9 +331,7 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
 }
 
 func (tcpStack *TCPStack) VListen(port uint16) (*VTCPListener, error) {
-  if tcpStack.Listeners == nil {
-        tcpStack.Listeners = make(map[uint16]*VTCPListener)
-    }
+
 	l := &VTCPListener{
 		AcceptQueue: make(chan *VTCPConn, 100),
 		LocalPort:   port,
@@ -346,8 +343,6 @@ func (tcpStack *TCPStack) VListen(port uint16) (*VTCPListener, error) {
 	}
 	tcpStack.NextSocketID++
 	tcpStack.Sockets[sock.SID] = sock
-  tcpStack.Listeners[port] = l
-  //fmt.Println("TCPSTACK LISTENERS", tcpStack.Listeners)
 	return l, nil
 }
 
@@ -363,7 +358,6 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
         if !ok {
             return nil, fmt.Errorf("Listener is closed")
         }
-        fmt.Printf("Accepted connection, state: %d\n", conn.State)
         return conn, nil
     case <-time.After(30 * time.Second):
         return nil, fmt.Errorf("Accept timeout")
@@ -372,7 +366,6 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
 func ACommand(port uint16, tcpstack *TCPStack){
     // Create listening socket
     listenConn, err := tcpstack.VListen(port)
-    //fmt.Println(tcpstack.Listeners[port])
     if err != nil {
         fmt.Println(err)
         return
@@ -396,7 +389,6 @@ func ACommand(port uint16, tcpstack *TCPStack){
 
 }
 
-
 //sendfile and receive file should do the whole c connect and accept!
 // Update SendFile to wait for connection establishment
 func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16, tcpStack *TCPStack) (int, error) {
@@ -405,13 +397,11 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
         return 0, fmt.Errorf("failed to open file: %v", err)
     }
     defer file.Close()
-
     // Establish connection
     conn, err := tcpStack.VConnect(destAddr, port, stack)
     if err != nil {
         return 0, fmt.Errorf("failed to establish connection: %v", err)
     }
-
     // Wait for connection to be established
     startTime := time.Now()
     for time.Since(startTime) < 30*time.Second {
@@ -424,10 +414,8 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
     if conn.State != Established {
         return 0, fmt.Errorf("connection failed to establish")
     }
-
     buf := make([]byte, 1024)
     totalBytes := 0
-
     for {
         n, err := file.Read(buf)
         if err == io.EOF {
@@ -436,7 +424,6 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
         if err != nil {
             return totalBytes, fmt.Errorf("failed to read from file: %v", err)
         }
-
         written, err := conn.VWrite(buf[:n], stack, tcpStack.Sockets[conn.SID])
         if err != nil {
             return totalBytes, fmt.Errorf("failed to write to connection: %v", err)
@@ -444,20 +431,16 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
         totalBytes += written
         conn.SeqNum += uint32(written)
     }
-
     return totalBytes, nil
 }
 
 //should do the whole accept and receive File
 func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStack) (int, error) {
-    fmt.Println("1. Starting ReceiveFile")
-
     // Create listener
     listenConn, err := tcpStack.VListen(port)
     if err != nil {
         return 0, fmt.Errorf("failed to create listener: %v", err)
     }
-    fmt.Println("2. Listener created on port:", port)
     
     // Create output file
     file, err := os.Create(filepath)
@@ -465,9 +448,7 @@ func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStac
         return 0, fmt.Errorf("failed to create file: %v", err)
     }
     defer file.Close()
-    fmt.Println("3. Output file created:", filepath)
     
-    fmt.Println("4. Waiting for connection...")
     conn, err := listenConn.VAccept()
     if err != nil {
         return 0, fmt.Errorf("failed to accept connection: %v", err)
@@ -475,8 +456,6 @@ func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStac
     if conn == nil {
         return 0, fmt.Errorf("accepted connection is nil")
     }
-    fmt.Println("5. Connection accepted")
-    fmt.Printf("Connection state: %d, Window: %+v\n", conn.State, conn.Window)
 
     // Initialize the connection's window if it's nil
     if conn.Window == nil {
@@ -486,7 +465,6 @@ func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStac
     buf := make([]byte, 1024)
     totalBytes := 0
     
-    fmt.Println("6. Starting to receive data")
     
     // Read with timeout
     readDeadline := time.Now().Add(30 * time.Second)
@@ -515,10 +493,8 @@ func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStac
             return totalBytes, fmt.Errorf("failed to write to file: %v", err)
         }
         totalBytes += written
-        
         fmt.Printf("Progress: %d bytes received and written to file\n", totalBytes)
     }
-    
     fmt.Printf("8. Transfer complete. Total bytes: %d\n", totalBytes)
     return totalBytes, nil
 }

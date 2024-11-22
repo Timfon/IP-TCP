@@ -16,8 +16,6 @@ type TCPStack struct {
   TcpRtoMax time.Duration
   Sockets map[int]*Socket
   NextSocketID int
-
-  Listeners    map[uint16]*VTCPListener
 }
 
 func InitializeTCP(config *lnxconfig.IPConfig) (*TCPStack, error){
@@ -26,8 +24,6 @@ func InitializeTCP(config *lnxconfig.IPConfig) (*TCPStack, error){
     TcpRtoMax: config.TcpRtoMax,
     Sockets: make(map[int]*Socket),
     NextSocketID: 0,
-
-    Listeners: make(map[uint16]*VTCPListener),
   }
   return TcpStack, nil
 }
@@ -89,9 +85,6 @@ func TCPPacketHandler(packet *Packet, args []interface{}) {
         }
     case 3:
         handleEstablished(sock, packet, tcpHdr, stack)
-        // fmt.Println(sock.Listen)
-        // fmt.Println(sock.Listen.AcceptQueue)
-        // sock.Listen.AcceptQueue <- sock.Conn
     }
 }
 
@@ -122,12 +115,6 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
     }
     tcpstack.Sockets[newSocket.SID] = &newSocket
     tcpstack.NextSocketID++
-
-    fmt.Printf("Debug - New connection initialized with RecvNext=%d, RecvLBR=%d, AckNum=%d\n",
-              new_Connection.Window.RecvNext,
-              new_Connection.Window.RecvLBR,
-              new_Connection.AckNum)
-
     // Send the packet
     fmt.Println("SYN received, sending SYN-ACK")
     err := stack.sendTCPPacket(&newSocket, []byte{}, header.TCPFlagAck | header.TCPFlagSyn)
@@ -174,7 +161,7 @@ func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields,
     sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
     sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
     
-    fmt.Printf("Debug - Initialized RecvNext to %d\n", sock.Conn.Window.RecvNext)
+    // fmt.Printf("Debug - Initialized RecvNext to %d\n", sock.Conn.Window.RecvNext)
     fmt.Println("SYN-ACK received, connection established")
     
     // Send ACK
@@ -217,7 +204,6 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
   for _, s := range tcpstack.Sockets {
       if s.Listen != nil && s.Listen.LocalPort == sock.Conn.LocalPort {
           // Place the established connection in the accept queue
-          fmt.Println("Placing connection in AcceptQueue")
           s.Listen.AcceptQueue <- sock.Conn
           break
       }
@@ -262,15 +248,13 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
         //           sock.Conn.AckNum)
                   
         if tcpHdr.SeqNum == sock.Conn.Window.RecvNext {
-            // fmt.Println("Debug - Processing packet")
-            
             // Write to receive buffer
-            n, err := sock.Conn.Window.recvBuffer.Write(payload)
+            _, err := sock.Conn.Window.recvBuffer.Write(payload)
             if err != nil {
                 fmt.Printf("Error writing to receive buffer: %v\n", err)
                 return
             }
-            fmt.Printf("Debug - Wrote %d bytes to receive buffer\n", n)
+            // fmt.Printf("Debug - Wrote %d bytes to receive buffer\n", n)
             
             // Update sequence tracking
             sock.Conn.Window.RecvNext += uint32(len(payload))
@@ -292,16 +276,15 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
                 fmt.Println("Successfully sent ACK")
             }
             
-            fmt.Printf("Debug - Updated state: RecvNext=%d, RecvLBR=%d, AckNum=%d\n",
-                      sock.Conn.Window.RecvNext,
-                      sock.Conn.Window.RecvLBR,
-                      sock.Conn.AckNum)
+            // fmt.Printf("Debug - Updated state: RecvNext=%d, RecvLBR=%d, AckNum=%d\n",
+                      // sock.Conn.Window.RecvNext,
+                      // sock.Conn.Window.RecvLBR,
+                      // sock.Conn.AckNum)
         } else {
             fmt.Printf("Sequence number mismatch - Expected: %d, Got: %d\n",
                       sock.Conn.Window.RecvNext, tcpHdr.SeqNum)
         }
     }
-    // fmt.Println("=== handleEstablished finished ===\n")
 }
 
 func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error {
