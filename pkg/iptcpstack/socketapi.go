@@ -19,6 +19,12 @@ const (
 	SynSent      SocketStatus = 1
 	SynReceived  SocketStatus = 2
 	Established  SocketStatus = 3
+    FinWait1     SocketStatus = 4
+    FinWait2     SocketStatus = 5
+    CloseWait    SocketStatus = 6
+    TimeWait     SocketStatus = 7
+    LastAck      SocketStatus = 8
+    
 )
 
 type Socket struct {
@@ -170,6 +176,19 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error
     return n, nil
 }
 
+func (c *VTCPConn) VClose(stack *IPStack, sock *Socket) error {
+    if c.State != Established {
+        return fmt.Errorf("connection not established, cannot begin close")
+    }
+
+    err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
+
+    if err != nil {
+		return fmt.Errorf("failed to send initial FIN packet: %v", err)
+	}
+    return nil
+}
+
 func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStack) (*VTCPConn, error) {
 	// Find route to destination
 	route, found, _ := ipStack.ForwardingTable.MatchPrefix(addr)
@@ -286,6 +305,13 @@ func (l *VTCPListener) VAccept() (*VTCPConn, error) {
         return nil, fmt.Errorf("Accept timeout")
     }
 }
+
+
+
+
+
+
+
 func ACommand(port uint16, tcpstack *TCPStack){
     // Create listening socket
     listenConn, err := tcpstack.VListen(port)
