@@ -51,6 +51,7 @@ type Window struct {
     DataAvailable chan struct{}
     RetransmissionQueue *RetransmissionQueue
 }
+
 type VTCPConn struct {
 	State      SocketStatus
 	LocalAddr  netip.Addr
@@ -134,6 +135,11 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error
     if c.State != Established {
         return 0, fmt.Errorf("connection not established")
     }
+    if c.Window.RetransmissionQueue == nil {
+        c.Window.RetransmissionQueue = NewRetransmissionQueue()
+        // Start retransmission handler in a goroutine
+        go c.HandleRetransmission(stack, sock)
+    }
     // Check available space in send window
     availSpace := int(c.Window.SendWindowSize - (c.Window.SendLBW - c.Window.SendUna))
 	  fmt.Errorf("flag")
@@ -156,6 +162,8 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error
 
 	  fmt.Errorf("flag")
     c.Window.SendLBW += uint32(n)
+    // Add to retransmission queue
+    c.Window.RetransmissionQueue.AddEntry(data[:writeLen], c.SeqNum)
 
     // Send the data
     err = stack.sendTCPPacket(sock, data[:writeLen], header.TCPFlagAck)

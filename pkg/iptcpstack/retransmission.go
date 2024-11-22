@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 	"github.com/google/netstack/tcpip/header"
-
   "sync"
 )
 
@@ -20,74 +19,121 @@ type RetransmissionEntry struct {
 	RTO time.Duration
   }
   
-  type RetransmissionQueue struct {
-	Entries []*RetransmissionEntry
-	mutex sync.Mutex
-	smoothRTT time.Duration
-	rttAlpha float64
-	rttBeta float64
-  }
+type RetransmissionQueue struct {
+    Entries []*RetransmissionEntry
+    mutex sync.Mutex
+    SRTT time.Duration    // Smoothed RTT
+    alpha float64         // Smoothing factor (typically 0.875)
+    beta float64         // RTO multiplier (typically 2.0)
+    RTOMin time.Duration  // Minimum allowed RTO
+    RTOMax time.Duration  // Maximum allowed RTO
+} 
   
   //Initialize the retransmission queue
-  func NewRetransmissionQueue() *RetransmissionQueue {
-	return &RetransmissionQueue{
-	  Entries: make([]*RetransmissionEntry, 0),
-	  smoothRTT: 1 * time.Second, // initial SRTT 1 sec
-	  rttAlpha: 0.125,
-	  rttBeta: 0.25,
-	}
-  }
-  
-  //Add a new entry to the retransmission queue
-  func (rq *RetransmissionQueue) AddEntry(data []byte, seqNum uint32) {
-	rq.mutex.Lock()
-	defer rq.mutex.Unlock()
-  
-	entry := &RetransmissionEntry{
-	  Data: data,
-	  SeqNum: seqNum,
-	  SendTime: time.Now(),
-	  RTO: rq.smoothRTT,
-	}
-	rq.Entries = append(rq.Entries, entry)
-  }
-  
-  func (rq *RetransmissionQueue) RemoveAckedEntries(ackNum uint32) {
-	rq.mutex.Lock()
-	defer rq.mutex.Unlock()
-  
-	for i := 0; i < len(rq.Entries); i++ {
-	  if rq.Entries[i].SeqNum < ackNum {
-		rq.Entries = append(rq.Entries[:i], rq.Entries[i+1:]...)
-		i--
-	  }
-	}
-  }
-  //Get Earliest
-func (rq *RetransmissionQueue) GetEarliest() *RetransmissionEntry {
-	rq.mutex.Lock()
-	defer rq.mutex.Unlock()
-  
-	if len(rq.Entries) == 0 {
-	  return nil
-	}
-  
-	return rq.Entries[0]
-  }
+ 
+func NewRetransmissionQueue() *RetransmissionQueue {
+    return &RetransmissionQueue{
+        Entries: make([]*RetransmissionEntry, 0),
+        SRTT: 1 * time.Second,  // Initial SRTT guess
+        alpha: 0.875,           // RFC793 recommended value (1 - 0.125)
+        beta: 2.0,             // RTO multiplier
+        RTOMin: 1 * time.Second,
+        RTOMax: 60 * time.Second,
+    }
+} 
 
-  //Handle the retransmission of packets
+//RFC793 RTT calculation
+func (rq *RetransmissionQueue) updateRTT(measuredRTT time.Duration) {
+    rq.mutex.Lock()
+    defer rq.mutex.Unlock()
+
+    // SRTT = (α * SRTTLast) + (1 - α) * RTTMeasured
+    rq.SRTT = time.Duration(float64(rq.SRTT)*rq.alpha + 
+              float64(measuredRTT)*(1-rq.alpha))
+    
+    // Calculate new RTO
+    // RTO = max(RTOMin, min(β * SRTT, RTOMax))
+    proposedRTO := time.Duration(float64(rq.SRTT) * rq.beta)
+    
+    if proposedRTO < rq.RTOMin {
+        proposedRTO = rq.RTOMin
+    }
+    if proposedRTO > rq.RTOMax {
+        proposedRTO = rq.RTOMax
+    }
+
+    // Update RTO for all unacked packets
+    for _, entry := range rq.Entries {
+        entry.RTO = proposedRTO
+    }
+}
+
 func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket) {
-	for {
-	  c.Window.RetransmissionQueue.mutex.Lock()
-	  for _, entry := range c.Window.RetransmissionQueue.Entries {
-		if time.Since(entry.SendTime) > entry.RTO {
-		  fmt.Println("Retransmitting packet")
-		  stack.sendTCPPacket(sock, entry.Data, header.TCPFlagAck)
-		  entry.SendTime = time.Now()
-		  entry.RTO *= 2
-		}
-	  }
-	  c.Window.RetransmissionQueue.mutex.Unlock()
-	  time.Sleep(1 * time.Second)
-	}
-  }
+    ticker := time.NewTicker(100 * time.Millisecond)
+    defer ticker.Stop()
+
+    for {
+        select {
+        case <-ticker.C:
+            c.Window.RetransmissionQueue.mutex.Lock()
+            now := time.Now()
+            
+            for i := 0; i < len(c.Window.RetransmissionQueue.Entries); i++ {
+                entry := c.Window.RetransmissionQueue.Entries[i]
+                if now.Sub(entry.SendTime) > entry.RTO {
+                    fmt.Printf("Retransmitting packet seq=%d (RTO=%v)\n", 
+                        entry.SeqNum, entry.RTO)
+                    
+                    // Send the packet
+                    err := stack.sendTCPPacket(sock, entry.Data, header.TCPFlagAck)
+                    if err != nil {
+                        fmt.Printf("Failed to retransmit: %v\n", err)
+                    }
+                    entry.SendTime = now
+                    // Double RTO for backoff, but keep within bounds
+                    entry.RTO = time.Duration(float64(entry.RTO) * 2)
+                    if entry.RTO > c.Window.RetransmissionQueue.RTOMax {
+                        entry.RTO = c.Window.RetransmissionQueue.RTOMax
+                    }
+                }
+            }
+            c.Window.RetransmissionQueue.mutex.Unlock()
+        }
+    }
+}
+
+func (rq *RetransmissionQueue) AddEntry(data []byte, seqNum uint32) {
+    rq.mutex.Lock()
+    defer rq.mutex.Unlock()
+
+    // Calculate current RTO based on SRTT
+    currentRTO := time.Duration(float64(rq.SRTT) * rq.beta)
+    if currentRTO < rq.RTOMin {
+        currentRTO = rq.RTOMin
+    }
+    if currentRTO > rq.RTOMax {
+        currentRTO = rq.RTOMax
+    }
+
+    entry := &RetransmissionEntry{
+        Data: make([]byte, len(data)), // Make a copy of the data
+        SeqNum: seqNum,
+        SendTime: time.Now(),
+        RTO: currentRTO,
+    }
+    copy(entry.Data, data)
+    rq.Entries = append(rq.Entries, entry)
+}
+
+func (rq *RetransmissionQueue) RemoveAckedEntries(ackNum uint32) {
+    rq.mutex.Lock()
+    defer rq.mutex.Unlock()
+
+    newEntries := make([]*RetransmissionEntry, 0)
+    for _, entry := range rq.Entries {
+        if entry.SeqNum + uint32(len(entry.Data)) > ackNum {
+            newEntries = append(newEntries, entry)
+        }
+    }
+    rq.Entries = newEntries
+}
