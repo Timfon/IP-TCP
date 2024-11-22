@@ -164,7 +164,6 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         fmt.Println(err)
         continue
       }
-      fmt.Println(tcpstack.Listeners)
 		} else if strings.HasPrefix(input, "a") {
       parts := strings.SplitN(input, " ", 2)
       if len(parts) != 2 {

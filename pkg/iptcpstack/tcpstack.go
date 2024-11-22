@@ -85,10 +85,13 @@ func TCPPacketHandler(packet *Packet, args []interface{}) {
         }
     case 2:
         if tcpHdr.Flags & header.TCPFlagAck != 0 {
-            handleAckReceived(sock, packet, tcpHdr, stack)
+            handleAckReceived(sock, packet, tcpHdr, stack, tcpStack)
         }
     case 3:
         handleEstablished(sock, packet, tcpHdr, stack)
+        // fmt.Println(sock.Listen)
+        // fmt.Println(sock.Listen.AcceptQueue)
+        // sock.Listen.AcceptQueue <- sock.Conn
     }
 }
 
@@ -109,11 +112,6 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
         Window: NewWindow(65535),
         SID: tcpstack.NextSocketID,
     }
-
-    //maybe plz
-    l.AcceptQueue <- new_Connection
-
-    
     // Initialize window tracking - for first data packet, we expect the original sequence number
     new_Connection.Window.RecvNext = tcpHdr.SeqNum
     new_Connection.Window.RecvLBR = tcpHdr.SeqNum
@@ -137,34 +135,34 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
         return fmt.Errorf("failed to send SYN-ACK packet: %v", err)
     }
 
-    startTime := time.Now()
-	retries := 0
+ //    startTime := time.Now()
+	// retries := 0
 
-    for {
-		// Check if we've been trying too long
-      if time.Since(startTime) > 30 * time.Second {
-        return fmt.Errorf("connection timed out after 30 seconds")
-      }
-
-		// Check if connection established
-		// if sock.Conn.State == Established {
-		// 	return nil
-		// }
-
-		// Check if it's time to retry
-		if time.Since(startTime) >= time.Duration(retries+1)*retryTimeout {
-			if retries >= maxRetries {
-				return fmt.Errorf("connection failed after %d SYN-ACK retransmissions", maxRetries)
-			}
-
-			fmt.Printf("Retransmitting SYN (attempt %d/%d)\n", retries+1, maxRetries)
-			err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagSyn | header.TCPFlagAck)
-			if err != nil {
-				return fmt.Errorf("failed to retransmit SYN-ACK packet: %v", err)
-			}
-			retries++
-		}
-	}
+ //    for {
+	// 	// Check if we've been trying too long
+ //      if time.Since(startTime) > 30 * time.Second {
+ //        return fmt.Errorf("connection timed out after 30 seconds")
+ //      }
+	//
+	// 	// Check if connection established
+	// 	// if sock.Conn.State == Established {
+	// 	// 	return nil
+	// 	// }
+	//
+	// 	// Check if it's time to retry
+	// 	if time.Since(startTime) >= time.Duration(retries+1)*retryTimeout {
+	// 		if retries >= maxRetries {
+	// 			return fmt.Errorf("connection failed after %d SYN-ACK retransmissions", maxRetries)
+	// 		}
+	//
+	// 		fmt.Printf("Retransmitting SYN (attempt %d/%d)\n", retries+1, maxRetries)
+	// 		err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagSyn | header.TCPFlagAck)
+	// 		if err != nil {
+	// 			return fmt.Errorf("failed to retransmit SYN-ACK packet: %v", err)
+	// 		}
+	// 		retries++
+	// 	}
+	// }
     return nil
 }
 
@@ -210,11 +208,32 @@ func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields,
     return nil
 }
 
-func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack){
+func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack, tcpstack *TCPStack){
   fmt.Println("ACK received, connection established")
   sock.Conn.State = 3
   sock.Conn.Window.RecvNext = tcpHdr.SeqNum
   sock.Conn.Window.RecvLBR = tcpHdr.SeqNum
+// Find the listening socket that created this connection
+  for _, s := range tcpstack.Sockets {
+      if s.Listen != nil && s.Listen.LocalPort == sock.Conn.LocalPort {
+          // Place the established connection in the accept queue
+          fmt.Println("Placing connection in AcceptQueue")
+          s.Listen.AcceptQueue <- sock.Conn
+          break
+      }
+  }
+
+  // Also need to update state in the listener's AcceptQueue connection
+    // if sock.Listen != nil && sock.Listen.AcceptQueue != nil {
+    //     select {
+    //     case conn := <-sock.Listen.AcceptQueue:
+    //         conn.State = Established
+    //         // Put it back in the queue
+    //         sock.Listen.AcceptQueue <- conn
+    //     default:
+    //         // Queue is empty, nothing to update
+    //     }
+    // }
 
   //sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
 
