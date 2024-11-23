@@ -145,41 +145,61 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error
     }
     if c.Window.RetransmissionQueue == nil {
         c.Window.RetransmissionQueue = NewRetransmissionQueue()
-        // Start retransmission handler in a goroutine
         go c.HandleRetransmission(stack, sock)
     }
 
-    // Block until there's space in the buffer
-    for {
+    totalWritten := 0
+    remaining := data
+
+    // Keep trying until all data is sent
+    for len(remaining) > 0 {
+        // Calculate available window space
         unackedData := c.Window.SendLBW - c.Window.SendUna
         availSpace := int(c.Window.SendWindowSize - unackedData)
         
         if availSpace > 0 {
             // Limit write size to available space
-            writeLen := len(data)
+            writeLen := len(remaining)
             if writeLen > availSpace {
                 writeLen = availSpace
             }
 
+            // Get the chunk to send
+            chunk := remaining[:writeLen]
+            
             // Write to send buffer
-            n, err := c.Window.sendBuffer.Write(data[:writeLen])
+            n, err := c.Window.sendBuffer.Write(chunk)
             if err != nil {
-                return 0, fmt.Errorf("failed to write to send buffer: %v", err)
+                return totalWritten, fmt.Errorf("failed to write to send buffer: %v", err)
             }
 
-            c.Window.SendLBW += uint32(n)
             // Add to retransmission queue
-            c.Window.RetransmissionQueue.AddEntry(data[:writeLen], c.SeqNum)
+            c.Window.RetransmissionQueue.AddEntry(chunk, c.SeqNum)
+            
             // Send the data
-            err = stack.sendTCPPacket(sock, data[:writeLen], header.TCPFlagAck)
+            err = stack.sendTCPPacket(sock, chunk, header.TCPFlagAck)
             if err != nil {
-                return 0, fmt.Errorf("failed to send data: %v", err)
+                return totalWritten, fmt.Errorf("failed to send data: %v", err)
             }
-            return n, nil
+
+            // Update sequence number and counters
+            c.SeqNum += uint32(n)
+            c.Window.SendLBW += uint32(n)
+            totalWritten += n
+            
+            // Move the remaining slice forward
+            remaining = remaining[n:]
+            
+            fmt.Printf("Sent chunk of %d bytes, SeqNum now %d\n", n, c.SeqNum)
         }
-        // Sleep briefly to avoid tight loop
-        time.Sleep(100 * time.Millisecond)
+        
+        if len(remaining) > 0 {
+            // If we have more to send, wait briefly for window space
+            time.Sleep(100 * time.Millisecond)
+        }
     }
+
+    return totalWritten, nil
 }
 
 func (c *VTCPConn) VClose(stack *IPStack, sock *Socket) error {

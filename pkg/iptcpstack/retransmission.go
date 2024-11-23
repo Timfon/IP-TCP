@@ -91,7 +91,7 @@ func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket) {
                     }
                     entry.SendTime = now
                     // Double RTO for backoff, but keep within bounds
-                    entry.RTO = time.Duration(float64(entry.RTO) * 2)
+                    entry.RTO = time.Duration(float64(entry.RTO) * 1.5)
                     if entry.RTO > c.Window.RetransmissionQueue.RTOMax {
                         entry.RTO = c.Window.RetransmissionQueue.RTOMax
                     }
