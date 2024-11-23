@@ -73,6 +73,7 @@ func TCPPacketHandler(packet *Packet, args []interface{}) {
         fmt.Println("Socket has no connection, dropping packet")
         return
     }
+
     // Now safe to check connection state
     switch sock.Conn.State {
     case 1:
@@ -183,6 +184,7 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
   }
 }
 
+// Simplify handleEstablished to just handle in-order data
 func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
     payloadOffset := int(tcpHdr.DataOffset)
     payload := packet.Body[payloadOffset:]
@@ -428,3 +430,4 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
 
     return SendIP(stack, &hdr, ipBytes)
 }
+
