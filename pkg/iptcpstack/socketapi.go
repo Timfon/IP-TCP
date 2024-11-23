@@ -145,51 +145,57 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error
     }
     if c.Window.RetransmissionQueue == nil {
         c.Window.RetransmissionQueue = NewRetransmissionQueue()
-        // Start retransmission handler in a goroutine
         go c.HandleRetransmission(stack, sock)
     }
 
-    // Block until there's space in the buffer
-    for {
+    var totalWritten int
+    remaining := data
+    
+    for len(remaining) > 0 {
+        // Check available window space
         unackedData := c.Window.SendLBW - c.Window.SendUna
         availSpace := int(c.Window.SendWindowSize - unackedData)
-        
-        if availSpace > 0 {
-            // Limit write size to available space
-            writeLen := len(data)
-            if writeLen > availSpace {
-                writeLen = availSpace
-            }
 
-            // Write to send buffer
-            n, err := c.Window.sendBuffer.Write(data[:writeLen])
-            if err != nil {
-                return 0, fmt.Errorf("failed to write to send buffer: %v", err)
-            }
-
-            c.Window.SendLBW += uint32(n)
-            // Add to retransmission queue
-            c.Window.RetransmissionQueue.AddEntry(data[:writeLen], c.SeqNum)
-            // Send the data
-            err = stack.sendTCPPacket(sock, data[:writeLen], header.TCPFlagAck)
-            if err != nil {
-                return 0, fmt.Errorf("failed to send data: %v", err)
-            }
-            return n, nil
-        } else if availSpace == 0 {
-// Zero window condition - enter probing mode
+        if availSpace == 0 {
+            // Zero window condition - enter probing mode
             err := c.handleZeroWindow(stack, sock)
             if err != nil {
-              return 0, fmt.Errorf("failed to handle zero window: %v", err)
+                return totalWritten, fmt.Errorf("zero window probe failed: %v", err)
             }
             // After probe response, recalculate available space
             unackedData = c.Window.SendLBW - c.Window.SendUna
             availSpace = int(c.Window.SendWindowSize - unackedData)
-
         }
-        // Sleep briefly to avoid tight loop
-        time.Sleep(50 * time.Millisecond)
+
+        // Determine how much we can send
+        writeLen := len(remaining)
+        if writeLen > availSpace {
+            writeLen = availSpace
+        }
+
+        // Write to send buffer
+        n, err := c.Window.sendBuffer.Write(remaining[:writeLen])
+        if err != nil {
+            return totalWritten, fmt.Errorf("failed to write to send buffer: %v", err)
+        }
+
+        c.Window.SendLBW += uint32(n)
+        
+        // Add to retransmission queue with optimized RTO
+        c.Window.RetransmissionQueue.AddEntry(remaining[:writeLen], c.SeqNum)
+        
+        // Send the data
+        err = stack.sendTCPPacket(sock, remaining[:writeLen], header.TCPFlagAck)
+        if err != nil {
+            return totalWritten, fmt.Errorf("failed to send data: %v", err)
+        }
+
+        remaining = remaining[writeLen:]
+        totalWritten += n
+        c.SeqNum += uint32(n)
     }
+
+    return totalWritten, nil
 }
 
 func (c *VTCPConn) VClose(stack *IPStack, sock *Socket) error {

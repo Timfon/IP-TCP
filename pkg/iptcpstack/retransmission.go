@@ -97,16 +97,13 @@ func (c *VTCPConn) handleZeroWindow(stack *IPStack, sock *Socket) error {
         if c.Window.SendWindowSize > 0 {
             return nil
         }
-
         // Exponential backoff for probe interval
         probeInterval *= 2
         if probeInterval > maxProbeInterval {
             probeInterval = maxProbeInterval
         }
     }
-    
     return fmt.Errorf("zero window condition persisted after max retries")
-
 }
 
 func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket) {
