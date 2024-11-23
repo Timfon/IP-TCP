@@ -222,7 +222,7 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
 		RemotePort: port,
 		SeqNum:     seqNum,
 		AckNum:     0,
-		Window: NewWindow(65535),
+		Window: NewWindow(131070),
     SID: tcpStack.NextSocketID,
 	}
 
@@ -418,7 +418,7 @@ func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStac
 
     // Initialize the connection's window if it's nil
     if conn.Window == nil {
-        conn.Window = NewWindow(65535)
+        conn.Window = NewWindow(131070)
     }
 
     buf := make([]byte, 1024)

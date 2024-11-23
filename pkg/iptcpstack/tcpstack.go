@@ -188,106 +188,129 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
     payloadOffset := int(tcpHdr.DataOffset)
     payload := packet.Body[payloadOffset:]
+
     // Handle ACKs for sent data
     if tcpHdr.Flags&header.TCPFlagAck != 0 {
-        // Always update SendUna if we get a higher ACK number
         if tcpHdr.AckNum > sock.Conn.Window.SendUna {
-            // Calculate how many new bytes were acknowledged
             newlyAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
-            
-            // Remove acknowledged data from send buffer
             sock.Conn.Window.RemoveAckedData(newlyAcked)
-            
-            // Update SendUna
             sock.Conn.Window.SendUna = tcpHdr.AckNum
-            
-            // If we have a retransmission queue, update RTT and clean up entries
+
+            // Update RTT measurements only for non-retransmitted packets
             if sock.Conn.Window.RetransmissionQueue != nil {
-                // Find the packet being acknowledged
                 for _, entry := range sock.Conn.Window.RetransmissionQueue.Entries {
                     if entry.SeqNum + uint32(len(entry.Data)) == tcpHdr.AckNum {
-                        measuredRTT := time.Since(entry.SendTime)
-                        sock.Conn.Window.RetransmissionQueue.updateRTT(measuredRTT)
+                        // Only update RTT if this wasn't a retransmission
+                        if time.Since(entry.SendTime) < entry.RTO {
+                            measuredRTT := time.Since(entry.SendTime)
+                            sock.Conn.Window.RetransmissionQueue.updateRTT(measuredRTT)
+                        }
                         break
                     }
                 }
-                // Remove acknowledged packets
                 sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
             }
         }
     }
 
-    if len(payload) > 0 {
-        // fmt.Printf("Payload contents: %s\n", string(payload))
-    }
     sock.Conn.SeqNum = tcpHdr.AckNum
-    
+
     if len(payload) > 0 {
-        if tcpHdr.SeqNum == sock.Conn.Window.RecvNext {
-            // Write to receive buffer
-            _, err := sock.Conn.Window.recvBuffer.Write(payload)
+        // Check if this is a duplicate packet we've already processed
+        if tcpHdr.SeqNum < sock.Conn.Window.RecvNext {
+            // Send ACK for duplicate packet to help sender's flow control
+            err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
             if err != nil {
-                fmt.Printf("Error writing to receive buffer: %v\n", err)
+                fmt.Printf("Error sending duplicate ACK: %v\n", err)
+            }
+            return
+        }
+
+        if tcpHdr.SeqNum == sock.Conn.Window.RecvNext {
+            // Process in-order packet
+            if err := processInOrderPacket(sock, payload, stack); err != nil {
+                fmt.Printf("Error processing in-order packet: %v\n", err)
                 return
             }
-            // Update sequence tracking
-            sock.Conn.Window.RecvNext += uint32(len(payload))
-            sock.Conn.AckNum = sock.Conn.Window.RecvNext
-            
-            // Signal data availability
-            select {
-            case sock.Conn.Window.DataAvailable <- struct{}{}: 
-                fmt.Println("Successfully signaled data availability")
-            default: 
-                fmt.Println("Channel already has signal, skipped")
-            }
 
-            // Check if ReceiveQueue exists and has items before processing
-            if sock.Conn.ReceiveQueue != nil && sock.Conn.ReceiveQueue.Len() > 0 {
-                for sock.Conn.ReceiveQueue.Len() > 0 {
-                    early := heap.Pop(sock.Conn.ReceiveQueue).(*Item)
-                    if early.priority == sock.Conn.Window.RecvNext {
-                        n, err := sock.Conn.Window.recvBuffer.Write(early.value)
-                        if err != nil {
-                            fmt.Printf("Error writing to receive buffer: %v\n", err)
-                            return
-                        }
-                        fmt.Printf("Debug - Wrote %d bytes from queue to receive buffer\n", n)
-                        
-                        sock.Conn.Window.RecvNext += uint32(len(early.value))
-                        sock.Conn.AckNum = sock.Conn.Window.RecvNext
-                    } else if early.priority > sock.Conn.Window.RecvNext {
-                        heap.Push(sock.Conn.ReceiveQueue, early)
-                        break
-                    }
-                }
-            }
-
-            // Send ACK
-            err = stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
-            if err != nil {
-                fmt.Printf("Error sending ACK: %v\n", err)
-            } else {
-                fmt.Println("Successfully sent ACK")
-            }
-
-        } else {
+            // Try to process any buffered out-of-order packets
+            processBufferedPackets(sock, stack)
+        } else if tcpHdr.SeqNum > sock.Conn.Window.RecvNext {
+            // Handle out-of-order packet
             if sock.Conn.ReceiveQueue == nil {
                 sock.Conn.ReceiveQueue = &PriorityQueue{}
                 heap.Init(sock.Conn.ReceiveQueue)
             }
-            fmt.Printf("Early Arrival packet - adding to queue")
-            entry:= &Item{
-                value: payload,
-                priority: tcpHdr.SeqNum,  //sock.Conn.Window.RecvNext, // maybe use the actual sequence number, not recv next?
+
+            // Check if we already have this packet buffered
+            isDuplicate := false
+            for _, item := range *sock.Conn.ReceiveQueue {
+                if item.priority == tcpHdr.SeqNum {
+                    isDuplicate = true
+                    break
+                }
             }
-            heap.Push(sock.Conn.ReceiveQueue, entry)
+
+            if !isDuplicate {
+                fmt.Printf("Buffering out-of-order packet: seq=%d, expecting=%d\n", 
+                    tcpHdr.SeqNum, sock.Conn.Window.RecvNext)
+                entry := &Item{
+                    value:    payload,
+                    priority: tcpHdr.SeqNum,
+                }
+                heap.Push(sock.Conn.ReceiveQueue, entry)
+            }
+
+            // Send duplicate ACK to trigger fast retransmit
+            err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+            if err != nil {
+                fmt.Printf("Error sending duplicate ACK: %v\n", err)
+            }
+        }
     }
-} else {
-    fmt.Println("Received return ACK")
 }
 
+// Helper function to process in-order packets
+func processInOrderPacket(sock *Socket, payload []byte, stack *IPStack) error {
+    _, err := sock.Conn.Window.recvBuffer.Write(payload)
+    if err != nil {
+        return fmt.Errorf("error writing to receive buffer: %v", err)
+    }
 
+    sock.Conn.Window.RecvNext += uint32(len(payload))
+    sock.Conn.AckNum = sock.Conn.Window.RecvNext
+
+    // Signal data availability
+    select {
+    case sock.Conn.Window.DataAvailable <- struct{}{}:
+        fmt.Printf("Processed in-order packet: seq=%d\n", sock.Conn.Window.RecvNext-uint32(len(payload)))
+    default:
+        fmt.Println("Channel already has signal, skipped")
+    }
+
+    // Send ACK
+    return stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+}
+
+// Helper function to process buffered out-of-order packets
+func processBufferedPackets(sock *Socket, stack *IPStack) {
+    if sock.Conn.ReceiveQueue == nil || sock.Conn.ReceiveQueue.Len() == 0 {
+        return
+    }
+
+    for sock.Conn.ReceiveQueue.Len() > 0 {
+        item := (*sock.Conn.ReceiveQueue)[0] // Peek at next packet
+        if item.priority != sock.Conn.Window.RecvNext {
+            break
+        }
+
+        // Remove and process the packet
+        early := heap.Pop(sock.Conn.ReceiveQueue).(*Item)
+        if err := processInOrderPacket(sock, early.value, stack); err != nil {
+            fmt.Printf("Error processing buffered packet: %v\n", err)
+            return
+        }
+    }
 }
 
 
