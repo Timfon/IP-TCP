@@ -68,8 +68,49 @@ func (rq *RetransmissionQueue) updateRTT(measuredRTT time.Duration) {
     }
 }
 
+
+func (c *VTCPConn) handleZeroWindow(stack *IPStack, sock *Socket) error {
+    probeInterval := 1 * time.Second // Start with 1 second
+    maxProbeInterval := 60 * time.Second
+    
+    for retries := 0; retries < 10; retries++ { // Limit max retries
+        // Send 1-byte probe
+        probe := []byte{0} // Just send a zero byte as probe
+        
+        // Try to peek at first byte in send buffer if available
+        peekBuf := make([]byte, 1)
+        if n, err := c.Window.sendBuffer.Read(peekBuf); n == 1 && err == nil {
+            // If we successfully read a byte, use it as probe and put it back
+            probe[0] = peekBuf[0]
+            c.Window.sendBuffer.Write(peekBuf)
+        }
+        
+        err := stack.sendTCPPacket(sock, probe, header.TCPFlagAck)
+        if err != nil {
+            return fmt.Errorf("failed to send zero window probe: %v", err)
+        }
+
+        // Wait for response with exponential backoff
+        time.Sleep(probeInterval)
+        
+        // Check if window has opened
+        if c.Window.SendWindowSize > 0 {
+            return nil
+        }
+
+        // Exponential backoff for probe interval
+        probeInterval *= 2
+        if probeInterval > maxProbeInterval {
+            probeInterval = maxProbeInterval
+        }
+    }
+    
+    return fmt.Errorf("zero window condition persisted after max retries")
+
+}
+
 func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket) {
-    ticker := time.NewTicker(100 * time.Millisecond)
+    ticker := time.NewTicker(50 * time.Millisecond) // More frequent checks
     defer ticker.Stop()
 
     for {
@@ -81,17 +122,19 @@ func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket) {
             for i := 0; i < len(c.Window.RetransmissionQueue.Entries); i++ {
                 entry := c.Window.RetransmissionQueue.Entries[i]
                 if now.Sub(entry.SendTime) > entry.RTO {
-                    fmt.Printf("Retransmitting packet seq=%d (RTO=%v)\n", 
-                        entry.SeqNum, entry.RTO)
+                    // Log retransmission with better details
+                    fmt.Printf("Retransmitting seq=%d len=%d RTO=%v\n", 
+                        entry.SeqNum, len(entry.Data), entry.RTO)
                     
-                    // Send the packet
                     err := stack.sendTCPPacket(sock, entry.Data, header.TCPFlagAck)
                     if err != nil {
-                        fmt.Printf("Failed to retransmit: %v\n", err)
+                        fmt.Printf("Retransmission failed: %v\n", err)
+                        continue
                     }
+                    
                     entry.SendTime = now
-                    // Double RTO for backoff, but keep within bounds
-                    entry.RTO = time.Duration(float64(entry.RTO) * 2)
+                    // More gradual RTO backoff
+                    entry.RTO = time.Duration(float64(entry.RTO) * 1.5)
                     if entry.RTO > c.Window.RetransmissionQueue.RTOMax {
                         entry.RTO = c.Window.RetransmissionQueue.RTOMax
                     }
