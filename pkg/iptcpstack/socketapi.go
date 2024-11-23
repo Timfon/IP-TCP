@@ -80,6 +80,9 @@ func NewWindow(size int) *Window {
         SendWindowSize: uint32(size),
         RecvWindowSize: uint32(size),
         DataAvailable:  make(chan struct{}, 10), // Buffer of 10 to prevent blocking on signal
+        SendUna:        0,
+        SendLBW:        0,
+
     }
     return w
 }
@@ -130,6 +133,12 @@ func (c *VTCPConn) VRead(buf []byte) (int, error) {
     }
 }
 
+func (w *Window) RemoveAckedData(bytesAcked uint32) {
+    // Create a temporary buffer to discard the acknowledged bytes
+    tmp := make([]byte, bytesAcked)
+    w.sendBuffer.Read(tmp) // Remove the acknowledged data from send buffer
+}
+
 func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error) {
     if c.State != Established {
         return 0, fmt.Errorf("connection not established")
@@ -139,36 +148,38 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error
         // Start retransmission handler in a goroutine
         go c.HandleRetransmission(stack, sock)
     }
-    // Check available space in send window
-    availSpace := int(c.Window.SendWindowSize - (c.Window.SendLBW - c.Window.SendUna))
-	  fmt.Errorf("flag")
-    if availSpace <= 0 {
-        return 0, fmt.Errorf("send buffer full")
-    }
-	  fmt.Errorf("flag")
 
-    writeLen := len(data)
-    if writeLen > availSpace {
-        writeLen = availSpace
-    }
+    // Block until there's space in the buffer
+    for {
+        unackedData := c.Window.SendLBW - c.Window.SendUna
+        availSpace := int(c.Window.SendWindowSize - unackedData)
+        
+        if availSpace > 0 {
+            // Limit write size to available space
+            writeLen := len(data)
+            if writeLen > availSpace {
+                writeLen = availSpace
+            }
 
-	  fmt.Errorf("flag")
-    // Write to send buffer
-    n, err := c.Window.sendBuffer.Write(data[:writeLen])
-    if err != nil {
-        return 0, fmt.Errorf("failed to write to send buffer: %v", err)
-    }
+            // Write to send buffer
+            n, err := c.Window.sendBuffer.Write(data[:writeLen])
+            if err != nil {
+                return 0, fmt.Errorf("failed to write to send buffer: %v", err)
+            }
 
-	  fmt.Errorf("flag")
-    c.Window.SendLBW += uint32(n)
-    // Add to retransmission queue
-    c.Window.RetransmissionQueue.AddEntry(data[:writeLen], c.SeqNum)
-    // Send the data
-    err = stack.sendTCPPacket(sock, data[:writeLen], header.TCPFlagAck)
-    if err != nil {
-        return 0, fmt.Errorf("failed to send data: %v", err)
+            c.Window.SendLBW += uint32(n)
+            // Add to retransmission queue
+            c.Window.RetransmissionQueue.AddEntry(data[:writeLen], c.SeqNum)
+            // Send the data
+            err = stack.sendTCPPacket(sock, data[:writeLen], header.TCPFlagAck)
+            if err != nil {
+                return 0, fmt.Errorf("failed to send data: %v", err)
+            }
+            return n, nil
+        }
+        // Sleep briefly to avoid tight loop
+        time.Sleep(100 * time.Millisecond)
     }
-    return n, nil
 }
 
 func (c *VTCPConn) VClose(stack *IPStack, sock *Socket) error {
@@ -331,11 +342,13 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
         return 0, fmt.Errorf("failed to open file: %v", err)
     }
     defer file.Close()
+    
     // Establish connection
     conn, err := tcpStack.VConnect(destAddr, port, stack)
     if err != nil {
         return 0, fmt.Errorf("failed to establish connection: %v", err)
     }
+    
     // Wait for connection to be established
     startTime := time.Now()
     for time.Since(startTime) < 30*time.Second {
@@ -348,8 +361,10 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
     if conn.State != Established {
         return 0, fmt.Errorf("connection failed to establish")
     }
+
     buf := make([]byte, 1024)
     totalBytes := 0
+    
     for {
         n, err := file.Read(buf)
         if err == io.EOF {
@@ -358,14 +373,21 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
         if err != nil {
             return totalBytes, fmt.Errorf("failed to read from file: %v", err)
         }
-        written, err := conn.VWrite(buf[:n], stack, tcpStack.Sockets[conn.SID])
-        if err != nil {
-            return totalBytes, fmt.Errorf("failed to write to connection: %v", err)
+
+        // Keep writing until all data from this read is sent
+        bytesWritten := 0
+        for bytesWritten < n {
+            written, err := conn.VWrite(buf[bytesWritten:n], stack, tcpStack.Sockets[conn.SID])
+            if err != nil {
+                return totalBytes, fmt.Errorf("failed to write to connection: %v", err)
+            }
+            bytesWritten += written
+            totalBytes += written
+            conn.SeqNum += uint32(written)
         }
-        totalBytes += written
-        conn.SeqNum += uint32(written)
+        
         if tcpStack.Sockets[conn.SID].Listen != nil {
-          tcpStack.Sockets[conn.SID].Listen.AcceptQueue <- conn
+            tcpStack.Sockets[conn.SID].Listen.AcceptQueue <- conn
         }
     }
     return totalBytes, nil

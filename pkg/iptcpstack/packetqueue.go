@@ -45,7 +45,12 @@ func (pq *PriorityQueue) Pop() any {
 	*pq = old[0 : n-1]
 	return item
 }
-
+func (pq PriorityQueue) Peek() interface{} {
+    if pq.Len() == 0 {
+        return nil
+    }
+    return pq[0]
+}
 // update modifies the priority and value of an Item in the queue.
 func (pq *PriorityQueue) update(item *Item, v []byte, priority uint32) {
 	item.value = v

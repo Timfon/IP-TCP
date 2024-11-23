@@ -189,22 +189,34 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
     payloadOffset := int(tcpHdr.DataOffset)
     payload := packet.Body[payloadOffset:]
     // Handle ACKs for sent data
-    if tcpHdr.Flags&header.TCPFlagAck != 0 && sock.Conn.Window.RetransmissionQueue != nil {
-        // Update RTT if this ACK acknowledges new data
+    if tcpHdr.Flags&header.TCPFlagAck != 0 {
+        // Always update SendUna if we get a higher ACK number
         if tcpHdr.AckNum > sock.Conn.Window.SendUna {
-            // Find the packet being acknowledged
-            for _, entry := range sock.Conn.Window.RetransmissionQueue.Entries {
-                if entry.SeqNum + uint32(len(entry.Data)) == tcpHdr.AckNum {
-                    measuredRTT := time.Since(entry.SendTime)
-                    sock.Conn.Window.RetransmissionQueue.updateRTT(measuredRTT)
-                    break
-                }
-            }
-            // Remove acknowledged packets
-            sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
+            // Calculate how many new bytes were acknowledged
+            newlyAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
+            
+            // Remove acknowledged data from send buffer
+            sock.Conn.Window.RemoveAckedData(newlyAcked)
+            
+            // Update SendUna
             sock.Conn.Window.SendUna = tcpHdr.AckNum
+            
+            // If we have a retransmission queue, update RTT and clean up entries
+            if sock.Conn.Window.RetransmissionQueue != nil {
+                // Find the packet being acknowledged
+                for _, entry := range sock.Conn.Window.RetransmissionQueue.Entries {
+                    if entry.SeqNum + uint32(len(entry.Data)) == tcpHdr.AckNum {
+                        measuredRTT := time.Since(entry.SendTime)
+                        sock.Conn.Window.RetransmissionQueue.updateRTT(measuredRTT)
+                        break
+                    }
+                }
+                // Remove acknowledged packets
+                sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
+            }
         }
     }
+
     if len(payload) > 0 {
         // fmt.Printf("Payload contents: %s\n", string(payload))
     }
@@ -395,6 +407,3 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
 
     return SendIP(stack, &hdr, ipBytes)
 }
-
-
-
