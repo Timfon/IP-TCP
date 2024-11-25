@@ -46,6 +46,7 @@ type Window struct {
 	RecvNext       uint32
 	RecvWindowSize uint32
 	RecvLBR        uint32
+	ReadWindowSize uint32
 
 	// Channel to signal data arrival
 	DataAvailable       chan struct{}

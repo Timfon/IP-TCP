@@ -152,6 +152,7 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 	// Initialize window tracking - for first data packet, we expect the original sequence number
 	new_Connection.Window.RecvNext = tcpHdr.SeqNum
 	new_Connection.Window.RecvLBR = tcpHdr.SeqNum
+	new_Connection.Window.ReadWindowSize = tcpHdr.WindowSize
 
 	newSocket := Socket{
 		SID:  tcpstack.NextSocketID,
@@ -176,6 +177,7 @@ func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields,
 	sock.Conn.AckNum = tcpHdr.SeqNum + 1
 	sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
 	sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
+	sock.Conn.Window.ReadWindowSize = tcpHdr.WindowSize
 	// fmt.Printf("Debug - Initialized RecvNext to %d\n", sock.Conn.Window.RecvNext)
 	fmt.Println("SYN-ACK received, connection established")
 	// Send ACK
@@ -245,6 +247,7 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 
 	} else {
 		fmt.Println("return ack")
+		sock.Conn.Window.ReadWindowSize = tcpHdr.WindowSize
 		/*
 			if tcpHdr.Flags&header.TCPFlagAck != 0 {
 			 	if tcpHdr.AckNum > sock.Conn.Window.SendUna {

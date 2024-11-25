@@ -92,7 +92,7 @@ func (c *VTCPConn) handleZeroWindow(stack *IPStack, sock *Socket) error {
 
 		// Check if window has opened
 		fmt.Println("Checking window size:", c.Window.SendWindowSize)
-		if c.Window.SendWindowSize > 0 {
+		if c.Window.ReadWindowSize > 0 {
 			return nil
 		}
 		// Exponential backoff for probe interval
