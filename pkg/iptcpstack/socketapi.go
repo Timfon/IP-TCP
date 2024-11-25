@@ -161,11 +161,11 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error
 	for len(remaining) > 0 {
 		// Calculate unacked data - make sure to handle wrap-around
 		unackedData := uint32(0)
-		if c.Window.SendLBW > c.Window.SendUna {
-			unackedData = c.Window.SendLBW - c.Window.SendUna
+		if c.Window.SendLBW > c.Window.SendNxt {
+			unackedData = c.Window.SendLBW - c.Window.SendNxt
 		}
 
-		availSpace := int(c.Window.SendWindowSize - unackedData)
+		availSpace := int(c.Window.SendWindowSize - c.Window.SendNxt)
 		fmt.Printf("Window check: size=%d unacked=%d avail=%d\n",
 			c.Window.SendWindowSize, unackedData, availSpace)
 
