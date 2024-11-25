@@ -45,9 +45,6 @@ func NewRetransmissionQueue() *RetransmissionQueue {
 
 //RFC793 RTT calculation
 func (rq *RetransmissionQueue) updateRTT(measuredRTT time.Duration) {
-    rq.mutex.Lock()
-    defer rq.mutex.Unlock()
-
     // SRTT = (α * SRTTLast) + (1 - α) * RTTMeasured
     rq.SRTT = time.Duration(float64(rq.SRTT)*rq.alpha + 
               float64(measuredRTT)*(1-rq.alpha))
@@ -108,7 +105,7 @@ func (c *VTCPConn) handleZeroWindow(stack *IPStack, sock *Socket) error {
 }
 
 func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket) {
-    ticker := time.NewTicker(50 * time.Millisecond) // More frequent checks
+    ticker := time.NewTicker(time.Millisecond) // More frequent checks
     defer ticker.Stop()
 
     for {
@@ -175,10 +172,11 @@ func (rq *RetransmissionQueue) RemoveAckedEntries(ackNum uint32) {
     for _, entry := range rq.Entries {
         if entry.SeqNum + uint32(len(entry.Data)) > ackNum {
             newEntries = append(newEntries, entry)
-        }
-        else{
+        } else {
             if entry.Retries == 0 {
-                
+                now := time.Now()
+                measuredRTT := now.Sub(entry.SendTime)
+                rq.updateRTT(measuredRTT)
             }
         }
     }
