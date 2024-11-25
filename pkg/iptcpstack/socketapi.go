@@ -1,30 +1,30 @@
 package iptcpstack
 
 import (
+	"container/heap"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/netip"
+	"os"
 	"time"
+
 	"github.com/google/netstack/tcpip/header"
-  "github.com/smallnest/ringbuffer"
-  "os"
-  "io"
-  "container/heap"
+	"github.com/smallnest/ringbuffer"
 )
 
 type SocketStatus int
 
 const (
-	Listening    SocketStatus = 0
-	SynSent      SocketStatus = 1
-	SynReceived  SocketStatus = 2
-	Established  SocketStatus = 3
-    FinWait1     SocketStatus = 4
-    FinWait2     SocketStatus = 5
-    CloseWait    SocketStatus = 6
-    TimeWait     SocketStatus = 7
-    LastAck      SocketStatus = 8
-    
+	Listening   SocketStatus = 0
+	SynSent     SocketStatus = 1
+	SynReceived SocketStatus = 2
+	Established SocketStatus = 3
+	FinWait1    SocketStatus = 4
+	FinWait2    SocketStatus = 5
+	CloseWait   SocketStatus = 6
+	TimeWait    SocketStatus = 7
+	LastAck     SocketStatus = 8
 )
 
 type Socket struct {
@@ -35,21 +35,21 @@ type Socket struct {
 }
 
 type Window struct {
-    recvBuffer     *ringbuffer.RingBuffer  // Buffer for receiving data
-    sendBuffer     *ringbuffer.RingBuffer  // Buffer for sending data
+	recvBuffer *ringbuffer.RingBuffer // Buffer for receiving data
+	sendBuffer *ringbuffer.RingBuffer // Buffer for sending data
 
-    SendUna        uint32
-    SendNxt        uint32
-    SendWindowSize uint32
-    SendLBW        uint32
+	SendUna        uint32
+	SendNxt        uint32
+	SendWindowSize uint32
+	SendLBW        uint32
 
-    RecvNext       uint32
-    RecvWindowSize uint32
-    RecvLBR        uint32
-    
-    // Channel to signal data arrival
-    DataAvailable chan struct{}
-    RetransmissionQueue *RetransmissionQueue
+	RecvNext       uint32
+	RecvWindowSize uint32
+	RecvLBR        uint32
+
+	// Channel to signal data arrival
+	DataAvailable       chan struct{}
+	RetransmissionQueue *RetransmissionQueue
 }
 
 type VTCPConn struct {
@@ -61,9 +61,9 @@ type VTCPConn struct {
 	SeqNum     uint32
 	AckNum     uint32
 
-	Window *Window
-  SID int
-  ReceiveQueue *PriorityQueue
+	Window       *Window
+	SID          int
+	ReceiveQueue *PriorityQueue
 }
 
 type VTCPListener struct {
@@ -74,137 +74,151 @@ type VTCPListener struct {
 }
 
 func NewWindow(size int) *Window {
-    w := &Window{
-        recvBuffer:     ringbuffer.New(int(size)),
-        sendBuffer:     ringbuffer.New(int(size)),
-        SendWindowSize: uint32(size),
-        RecvWindowSize: uint32(size),
-        DataAvailable:  make(chan struct{}, 10), // Buffer of 10 to prevent blocking on signal
-        SendUna:        0,
-        SendLBW:        0,
-
-    }
-    return w
+	w := &Window{
+		recvBuffer:          ringbuffer.New(int(size)),
+		sendBuffer:          ringbuffer.New(int(size)),
+		SendWindowSize:      uint32(size),
+		RecvWindowSize:      uint32(size),
+		DataAvailable:       make(chan struct{}, 10), // Buffer of 10 to prevent blocking on signal
+		SendUna:             0,
+		SendLBW:             0,
+		RetransmissionQueue: NewRetransmissionQueue(),
+	}
+	return w
 }
 
 func (c *VTCPConn) VRead(buf []byte) (int, error) {
-    if c == nil {
-        return 0, fmt.Errorf("connection is nil")
-    }
-    if c.State != Established {
-        return 0, fmt.Errorf("connection not established")
-    }
-    if c.Window == nil {
-        return 0, fmt.Errorf("connection window is nil")
-    }
-    if c.Window.recvBuffer == nil {
-        return 0, fmt.Errorf("receive buffer is nil")
-    }
+	if c == nil {
+		return 0, fmt.Errorf("connection is nil")
+	}
+	if c.State != Established {
+		return 0, fmt.Errorf("connection not established")
+	}
+	if c.Window == nil {
+		return 0, fmt.Errorf("connection window is nil")
+	}
+	if c.Window.recvBuffer == nil {
+		return 0, fmt.Errorf("receive buffer is nil")
+	}
 
-    // Calculate available data using TCP sequence numbers
-    availData := int(c.Window.RecvNext - c.Window.RecvLBR)
-    // fmt.Printf("Debug - Available data: %d (RecvNext: %d, RecvLBR: %d)\n", 
-    //           availData, c.Window.RecvNext, c.Window.RecvLBR)
+	// Calculate available data using TCP sequence numbers
+	availData := int(c.Window.RecvNext - c.Window.RecvLBR)
+	fmt.Printf("Debug - Available data: %d (RecvNext: %d, RecvLBR: %d)\n",
+		availData, c.Window.RecvNext, c.Window.RecvLBR)
 
-    if availData > 0 {
-        // Read from receive buffer
-        readLen := len(buf)
-        if readLen > availData {
-            readLen = availData
-        }
-        
-        n, err := c.Window.recvBuffer.Read(buf[:readLen])
-        if err != nil {
-            return 0, fmt.Errorf("error reading from receive buffer: %v", err)
-        }
-        
-        // Update TCP read pointer
-        c.Window.RecvLBR += uint32(n)
-        fmt.Printf("Debug - Read %d bytes\n", n)
-        return n, nil
-    }
-    
-    // No data available, wait for more
-    // fmt.Println("Debug - No data available, waiting...")
-    select {
-    case <-c.Window.DataAvailable:
-        fmt.Println("Debug - Received data notification")
-        return c.VRead(buf)  
-    }
+	// Update receive window size based on buffer space
+	c.Window.RecvWindowSize = uint32(c.Window.recvBuffer.Free())
+	fmt.Printf("Debug - Updated receive window size to %d\n", c.Window.RecvWindowSize)
+
+	// Wait for data if none is available
+	for availData == 0 {
+		select {
+		case <-c.Window.DataAvailable:
+			availData = int(c.Window.RecvNext - c.Window.RecvLBR)
+			fmt.Printf("Debug - Received notification, now available: %d\n", availData)
+		case <-time.After(5 * time.Second):
+			if c.ReceiveQueue == nil || c.ReceiveQueue.Len() == 0 {
+				return 0, fmt.Errorf("read timeout")
+			}
+			continue
+		}
+	}
+
+	// Read data from buffer
+	readLen := len(buf)
+	if readLen > availData {
+		readLen = availData
+	}
+
+	n, err := c.Window.recvBuffer.Read(buf[:readLen])
+	if err != nil {
+		return 0, fmt.Errorf("error reading from receive buffer: %v", err)
+	}
+
+	// Update TCP read pointer and window size
+	c.Window.RecvLBR += uint32(n)
+	c.Window.RecvWindowSize = uint32(c.Window.recvBuffer.Free())
+	fmt.Printf("Debug - Read %d bytes, new window size: %d\n", n, c.Window.RecvWindowSize)
+
+	return n, nil
 }
 
 func (w *Window) RemoveAckedData(bytesAcked uint32) {
-    // Create a temporary buffer to discard the acknowledged bytes
-    tmp := make([]byte, bytesAcked)
-    w.sendBuffer.Read(tmp) // Remove the acknowledged data from send buffer
+	// Create a temporary buffer to discard the acknowledged bytes
+	tmp := make([]byte, bytesAcked)
+	w.sendBuffer.Read(tmp) // Remove the acknowledged data from send buffer
 }
 
 func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error) {
-    if c.State != Established {
-        return 0, fmt.Errorf("connection not established")
-    }
+	if c.State != Established {
+		return 0, fmt.Errorf("connection not established")
+	}
 
-    var totalWritten int
-    remaining := data
-    
-    for len(remaining) > 0 {
-        // Check available window space
-        unackedData := c.Window.SendLBW - c.Window.SendUna
-        availSpace := int(c.Window.SendWindowSize - unackedData)
+	var totalWritten int
+	remaining := data
 
-        if availSpace == 0 {
-            // Zero window condition - enter probing mode
-            err := c.handleZeroWindow(stack, sock)
-            if err != nil {
-                return totalWritten, fmt.Errorf("zero window probe failed: %v", err)
-            }
-            // After probe response, recalculate available space
-            unackedData = c.Window.SendLBW - c.Window.SendUna
-            availSpace = int(c.Window.SendWindowSize - unackedData)
-        }
+	for len(remaining) > 0 {
+		// Calculate unacked data - make sure to handle wrap-around
+		unackedData := uint32(0)
+		if c.Window.SendLBW > c.Window.SendUna {
+			unackedData = c.Window.SendLBW - c.Window.SendUna
+		}
 
-        // Determine how much we can send
-        writeLen := len(remaining)
-        if writeLen > availSpace {
-            writeLen = availSpace
-        }
+		availSpace := int(c.Window.SendWindowSize - unackedData)
+		fmt.Printf("Window check: size=%d unacked=%d avail=%d\n",
+			c.Window.SendWindowSize, unackedData, availSpace)
 
-        // Write to send buffer
-        n, err := c.Window.sendBuffer.Write(remaining[:writeLen])
-        if err != nil {
-            return totalWritten, fmt.Errorf("failed to write to send buffer: %v", err)
-        }
+		if availSpace <= 0 {
+			fmt.Printf("Zero window condition: unacked=%d window=%d\n",
+				unackedData, c.Window.SendWindowSize)
+			err := c.handleZeroWindow(stack, sock)
+			if err != nil {
+				return totalWritten, fmt.Errorf("zero window probe failed: %v", err)
+			}
+			continue
+		}
 
-        c.Window.SendLBW += uint32(n)
-        
-        // Add to retransmission queue with optimized RTO
-        c.Window.RetransmissionQueue.AddEntry(remaining[:writeLen], c.SeqNum)
-        
-        // Send the data
-        err = stack.sendTCPPacket(sock, remaining[:writeLen], header.TCPFlagAck)
-        if err != nil {
-            return totalWritten, fmt.Errorf("failed to send data: %v", err)
-        }
+		// Determine how much we can send
+		writeLen := len(remaining)
+		if writeLen > availSpace {
+			writeLen = availSpace
+		}
+		if writeLen > 1024 {
+			writeLen = 1024
+		}
 
-        remaining = remaining[writeLen:]
-        totalWritten += n
-        c.SeqNum += uint32(n)
-    }
+		// Write to send buffer
+		n, err := c.Window.sendBuffer.Write(remaining[:writeLen])
+		if err != nil {
+			return totalWritten, fmt.Errorf("failed to write to send buffer: %v", err)
+		}
 
-    return totalWritten, nil
+		c.Window.SendLBW += uint32(n)
+
+		// Send the data
+		err = stack.sendTCPPacket(sock, remaining[:writeLen], header.TCPFlagAck)
+		if err != nil {
+			return totalWritten, fmt.Errorf("failed to send data: %v", err)
+		}
+
+		remaining = remaining[writeLen:]
+		totalWritten += n
+		c.SeqNum += uint32(n)
+	}
+	return totalWritten, nil
 }
 
 func (c *VTCPConn) VClose(stack *IPStack, sock *Socket) error {
-    if c.State != Established {
-        return fmt.Errorf("connection not established, cannot begin close")
-    }
+	if c.State != Established {
+		return fmt.Errorf("connection not established, cannot begin close")
+	}
 
-    err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
+	err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
 
-    if err != nil {
+	if err != nil {
 		return fmt.Errorf("failed to send initial FIN packet: %v", err)
 	}
-    return nil
+	return nil
 }
 
 func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStack) (*VTCPConn, error) {
@@ -225,7 +239,7 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
 
 	// Create new socket
 	localPort := uint16(rand.Uint32() >> 16)
-	seqNum := rand.Uint32()%100 * 1000
+	seqNum := rand.Uint32() % 100 * 1000
 	conn := &VTCPConn{
 		State:      SynSent,
 		LocalAddr:  localAddr,
@@ -234,14 +248,14 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
 		RemotePort: port,
 		SeqNum:     seqNum,
 		AckNum:     0,
-		Window: NewWindow(131070),
-    SID: tcpStack.NextSocketID,
+		Window:     NewWindow(66535),
+		SID:        tcpStack.NextSocketID,
 	}
 
-  newq := make(PriorityQueue, 0)
-  heap.Init(&newq)
+	newq := make(PriorityQueue, 0)
+	heap.Init(&newq)
 
-  conn.ReceiveQueue = &newq
+	conn.ReceiveQueue = &newq
 
 	sock := &Socket{
 		SID:  tcpStack.NextSocketID,
@@ -249,7 +263,6 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
 	}
 	tcpStack.NextSocketID++
 	tcpStack.Sockets[sock.SID] = sock
-
 
 	// Initial SYN send
 	err := ipStack.sendTCPPacket(sock, []byte{}, header.TCPFlagSyn)
@@ -287,7 +300,7 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
 	// 		retries++
 	// 	}
 	// }
-  return conn, nil
+	return conn, nil
 }
 
 func (tcpStack *TCPStack) VListen(port uint16) (*VTCPListener, error) {
@@ -308,165 +321,175 @@ func (tcpStack *TCPStack) VListen(port uint16) (*VTCPListener, error) {
 
 // Update VAccept to handle timeouts
 func (l *VTCPListener) VAccept() (*VTCPConn, error) {
-    if l.Closed {
-        return nil, fmt.Errorf("Listener is closed")
-    }
-    // Wait for connection with timeout
-    select {
-    case conn, ok := <-l.AcceptQueue:
-        if !ok {
-            return nil, fmt.Errorf("Listener is closed")
-        }
-        return conn, nil
-    }
+	if l.Closed {
+		return nil, fmt.Errorf("Listener is closed")
+	}
+	// Wait for connection with timeout
+	select {
+	case conn, ok := <-l.AcceptQueue:
+		if !ok {
+			return nil, fmt.Errorf("Listener is closed")
+		}
+		return conn, nil
+	}
 }
 
-func ACommand(port uint16, tcpstack *TCPStack){
-    // Create listening socket
-    listenConn, err := tcpstack.VListen(port)
-    if err != nil {
-        fmt.Println(err)
-        return
-    }
-    // Start a goroutine to continuously accept connections
-    //fmt.Println("Acommand")
-    go func() {
-        for {
-            //fmt.Println("Acommand1")
-            _, err := listenConn.VAccept()
-            //fmt.Println("Acommand2")
-            if err != nil {
-              // TODO: If the listener is closed, exit the goroutine
-                fmt.Println(err)
-                continue
-            }
-            // The connection is now established and ready for use by other REPL commands
-            // We don't need to do anything else with it here
-        }
-    }()
+func ACommand(port uint16, tcpstack *TCPStack) {
+	// Create listening socket
+	listenConn, err := tcpstack.VListen(port)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	// Start a goroutine to continuously accept connections
+	//fmt.Println("Acommand")
+	go func() {
+		for {
+			//fmt.Println("Acommand1")
+			_, err := listenConn.VAccept()
+			//fmt.Println("Acommand2")
+			if err != nil {
+				// TODO: If the listener is closed, exit the goroutine
+				fmt.Println(err)
+				continue
+			}
+			// The connection is now established and ready for use by other REPL commands
+			// We don't need to do anything else with it here
+		}
+	}()
 }
 
-//sendfile and receive file should do the whole c connect and accept!
+// sendfile and receive file should do the whole c connect and accept!
 // Update SendFile to wait for connection establishment
 func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16, tcpStack *TCPStack) (int, error) {
-    file, err := os.Open(filepath)
-    if err != nil {
-        return 0, fmt.Errorf("failed to open file: %v", err)
-    }
-    defer file.Close()
-    
-    // Establish connection
-    conn, err := tcpStack.VConnect(destAddr, port, stack)
-    if err != nil {
-        return 0, fmt.Errorf("failed to establish connection: %v", err)
-    }
-    
-    // Wait for connection to be established
-    startTime := time.Now()
-    for time.Since(startTime) < 30*time.Second {
-        if conn.State == Established {
-            break
-        }
-        time.Sleep(100 * time.Millisecond)
-    }
-    
-    if conn.State != Established {
-        return 0, fmt.Errorf("connection failed to establish")
-    }
+	file, err := os.Open(filepath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open file: %v", err)
+	}
+	defer file.Close()
 
-    buf := make([]byte, 1024)
-    totalBytes := 0
-    
-    for {
-        n, err := file.Read(buf)
-        if err == io.EOF {
-            break
-        }
-        if err != nil {
-            return totalBytes, fmt.Errorf("failed to read from file: %v", err)
-        }
+	// Establish connection
+	conn, err := tcpStack.VConnect(destAddr, port, stack)
+	if err != nil {
+		return 0, fmt.Errorf("failed to establish connection: %v", err)
+	}
 
-        // Keep writing until all data from this read is sent
-        bytesWritten := 0
-        for bytesWritten < n {
-            written, err := conn.VWrite(buf[bytesWritten:n], stack, tcpStack.Sockets[conn.SID])
-            if err != nil {
-                return totalBytes, fmt.Errorf("failed to write to connection: %v", err)
-            }
-            bytesWritten += written
-            totalBytes += written
-            conn.SeqNum += uint32(written)
-        }
-        
-        if tcpStack.Sockets[conn.SID].Listen != nil {
-            tcpStack.Sockets[conn.SID].Listen.AcceptQueue <- conn
-        }
-    }
-    return totalBytes, nil
+	// Wait for connection to be established
+	startTime := time.Now()
+	for time.Since(startTime) < 30*time.Second {
+		if conn.State == Established {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if conn.State != Established {
+		return 0, fmt.Errorf("connection failed to establish")
+	}
+
+	buf := make([]byte, 1024)
+	totalBytes := 0
+
+	for {
+		n, err := file.Read(buf)
+		if err == io.EOF {
+			fmt.Printf("reached end of file, terminating send")
+			break
+		}
+		if err != nil {
+			return totalBytes, fmt.Errorf("failed to read from file: %v", err)
+		}
+
+		// Keep writing until all data from this read is sent
+		bytesWritten := 0
+
+		for bytesWritten < n {
+			written, err := conn.VWrite(buf[bytesWritten:n], stack, tcpStack.Sockets[conn.SID])
+			if err != nil {
+				return totalBytes, fmt.Errorf("failed to write to connection: %v", err)
+			}
+			bytesWritten += written
+			totalBytes += written
+			conn.SeqNum += uint32(written)
+			fmt.Printf("Wrote %v bytes", written)
+		}
+
+		if tcpStack.Sockets[conn.SID].Listen != nil {
+			tcpStack.Sockets[conn.SID].Listen.AcceptQueue <- conn
+		}
+	}
+	return totalBytes, nil
 }
 
-//should do the whole accept and receive File
+// should do the whole accept and receive File
 func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStack) (int, error) {
-    // Create listener
-    listenConn, err := tcpStack.VListen(port)
-    if err != nil {
-        return 0, fmt.Errorf("failed to create listener: %v", err)
-    }
-    
-    // Create output file
-    file, err := os.Create(filepath)
-    if err != nil {
-        return 0, fmt.Errorf("failed to create file: %v", err)
-    }
-    defer file.Close()
-    
-    conn, err := listenConn.VAccept()
-    if err != nil {
-        return 0, fmt.Errorf("failed to accept connection: %v", err)
-    }
-    if conn == nil {
-        return 0, fmt.Errorf("accepted connection is nil")
-    }
+	// Create listener
+	listenConn, err := tcpStack.VListen(port)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create listener: %v", err)
+	}
 
-    // Initialize the connection's window if it's nil
-    if conn.Window == nil {
-        conn.Window = NewWindow(131070)
-    }
+	// Create output file
+	file, err := os.Create(filepath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create file: %v", err)
+	}
+	defer file.Close()
 
-    buf := make([]byte, 1024)
-    totalBytes := 0
+	conn, err := listenConn.VAccept()
+	if err != nil {
+		return 0, fmt.Errorf("failed to accept connection: %v", err)
+	}
+	if conn == nil {
+		return 0, fmt.Errorf("accepted connection is nil")
+	}
 
-    // Read with timeout
-    //readDeadline := time.Now().Add(30 * time.Second)
-    for {//time.Now().Before(readDeadline) {
-        fmt.Printf("Before read - SeqNum: %d, AckNum: %d\n", conn.SeqNum, conn.AckNum)
-        n, err := conn.VRead(buf)
-        fmt.Println("Buffer contents:", string(buf[:n]))
-        if err != nil {
-            if err.Error() == "read timeout" {
-                fmt.Println("Read timeout reached")
-                break
-            }
-            return totalBytes, fmt.Errorf("failed to read from connection: %v", err)
-        }
-        fmt.Println("n:", n)
-        if n == 0 {
-            // No more data to read
-            fmt.Println("No more data available")
-            break
-        }
-        // Reset timeout on successful read
-        //readDeadline = time.Now().Add(30 * time.Second)
-        fmt.Printf("Received %d bytes - SeqNum: %d, AckNum: %d\n", n, conn.SeqNum, conn.AckNum)
-        
-        written, err := file.Write(buf[:n])
-        if err != nil {
-            return totalBytes, fmt.Errorf("failed to write to file: %v", err)
-        }
-        totalBytes += written
-        fmt.Printf("Progress: %d bytes received and written to file\n", totalBytes)
-    }
-    fmt.Printf("8. Transfer complete. Total bytes: %d\n", totalBytes)
-    return totalBytes, nil
+	// Initialize the connection's window if it's nil
+	if conn.Window == nil {
+		conn.Window = NewWindow(65535)
+	}
+
+	buf := make([]byte, 1024)
+	totalBytes := 0
+
+	for {
+		fmt.Printf("Before read - SeqNum: %d, AckNum: %d\n", conn.SeqNum, conn.AckNum)
+		n, err := conn.VRead(buf)
+
+		if err != nil {
+			if err.Error() == "read timeout" {
+				// Only break on timeout if we've received some data
+				if totalBytes > 0 {
+					break
+				}
+			}
+			return totalBytes, fmt.Errorf("failed to read from connection: %v", err)
+		}
+
+		if n > 0 {
+			fmt.Printf("Received %d bytes - SeqNum: %d, AckNum: %d\n", n, conn.SeqNum, conn.AckNum)
+			written, err := file.Write(buf[:n])
+			if err != nil {
+				return totalBytes, fmt.Errorf("failed to write to file: %v", err)
+			}
+			totalBytes += written
+			fmt.Printf("Progress: %d bytes received and written to file\n", totalBytes)
+
+			// Don't break here - keep reading until timeout or error
+		} else {
+			// Only break on zero bytes if we've received some data already
+			if totalBytes > 0 {
+				time.Sleep(100 * time.Millisecond) // Small delay to check for more data
+				select {
+				case <-conn.Window.DataAvailable:
+					continue // More data is available, keep reading
+				default:
+					break // No more data available
+				}
+			}
+		}
+	}
+
+	fmt.Printf("Transfer complete. Total bytes: %d\n", totalBytes)
+	return totalBytes, nil
 }
-

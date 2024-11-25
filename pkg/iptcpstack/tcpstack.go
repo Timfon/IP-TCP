@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/netip"
+	"sync"
 	"time"
 
 	"github.com/google/netstack/tcpip/header"
@@ -17,6 +18,7 @@ type TCPStack struct {
 	TcpRtoMin    time.Duration
 	TcpRtoMax    time.Duration
 	Sockets      map[int]*Socket
+	Mu           sync.Mutex
 	NextSocketID int
 }
 
@@ -32,6 +34,8 @@ func InitializeTCP(config *lnxconfig.IPConfig) (*TCPStack, error) {
 
 func (stack *TCPStack) FindSocket(localAddr netip.Addr, localPort uint16, remoteAddr netip.Addr, remotePort uint16) *Socket {
 	// First check for exact connection match
+	stack.Mu.Lock()
+	defer stack.Mu.Unlock()
 	for _, sock := range stack.Sockets {
 		if sock.Conn != nil &&
 			sock.Conn.LocalPort == localPort &&
@@ -55,6 +59,18 @@ func TCPPacketHandler(packet *Packet, args []interface{}) {
 	tcpStack := args[1].(*TCPStack)
 	hdr := packet.Header
 	tcpHdr := iptcp_utils.ParseTCPHeader(packet.Body)
+
+	tcpPayload := packet.Body[tcpHdr.DataOffset:]
+	tcpChecksumFromHeader := tcpHdr.Checksum
+	tcpHdr.Checksum = 0
+	//fmt.Println(tcpHdr, hdr.Src, hdr.Dst, tcpPayload)
+	tcpComputedChecksum := iptcp_utils.ComputeTCPChecksum(&tcpHdr, hdr.Src, hdr.Dst, tcpPayload)
+	if tcpChecksumFromHeader != tcpComputedChecksum {
+		fmt.Println("TCP Checksum mismatch, dropping packet")
+		fmt.Print("> ")
+		return
+	}
+
 	sock := tcpStack.FindSocket(hdr.Dst, tcpHdr.DstPort, hdr.Src, tcpHdr.SrcPort)
 	if sock == nil {
 		fmt.Println("No matching socket found, dropping packet")
@@ -170,110 +186,42 @@ func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields,
 	return nil
 }
 
-func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack, tcpstack *TCPStack){
-  fmt.Println("ACK received, connection established")
-  sock.Conn.State = 3
-  sock.Conn.Window.RecvNext = tcpHdr.SeqNum
-  sock.Conn.Window.RecvLBR = tcpHdr.SeqNum
-// Find the listening socket that created this connection
-  for _, s := range tcpstack.Sockets {
-      if s.Listen != nil && s.Listen.LocalPort == sock.Conn.LocalPort {
-          // Place the established connection in the accept queue
-          s.Listen.AcceptQueue <- sock.Conn
-          break
-      }
-  }
+func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack, tcpstack *TCPStack) {
+	fmt.Println("ACK received, connection established")
+	sock.Conn.State = 3
+	sock.Conn.Window.RecvNext = tcpHdr.SeqNum
+	sock.Conn.Window.RecvLBR = tcpHdr.SeqNum
+	// Find the listening socket that created this connection
+	for _, s := range tcpstack.Sockets {
+		if s.Listen != nil && s.Listen.LocalPort == sock.Conn.LocalPort {
+			// Place the established connection in the accept queue
+			s.Listen.AcceptQueue <- sock.Conn
+			break
+		}
+	}
 
-    sock.Conn.Window.RetransmissionQueue = NewRetransmissionQueue()
-    go sock.Conn.HandleRetransmission(stack, sock)
+	sock.Conn.Window.RetransmissionQueue = NewRetransmissionQueue()
+	go sock.Conn.HandleRetransmission(stack, sock, tcpstack)
 
 }
 
-// Simplify handleEstablished to just handle in-order data
 func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
 	payloadOffset := int(tcpHdr.DataOffset)
 	payload := packet.Body[payloadOffset:]
 
-	// Handle ACKs for sent data
-	if tcpHdr.Flags&header.TCPFlagAck != 0 {
-		if tcpHdr.AckNum > sock.Conn.Window.SendUna {
-			newlyAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
-			sock.Conn.Window.RemoveAckedData(newlyAcked)
-			sock.Conn.Window.SendUna = tcpHdr.AckNum
-
-			// Update RTT measurements only for non-retransmitted packets
-			if sock.Conn.Window.RetransmissionQueue != nil {
-				for _, entry := range sock.Conn.Window.RetransmissionQueue.Entries {
-					if entry.SeqNum+uint32(len(entry.Data)) == tcpHdr.AckNum {
-						// Only update RTT if this wasn't a retransmission
-						if time.Since(entry.SendTime) < entry.RTO {
-							measuredRTT := time.Since(entry.SendTime)
-							sock.Conn.Window.RetransmissionQueue.updateRTT(measuredRTT)
-						}
-						break
-					}
-				}
-				sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
-			}
-		}
-	}
-
 	sock.Conn.SeqNum = tcpHdr.AckNum
 
 	if len(payload) > 0 {
-		// Check if this is a duplicate packet we've already processed
-		if tcpHdr.SeqNum < sock.Conn.Window.RecvNext {
-			// Send ACK for duplicate packet to help sender's flow control
-			err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
-			if err != nil {
-				fmt.Printf("Error sending duplicate ACK: %v\n", err)
-			}
-			return
+		// Write to receive buffer
+		processInOrderPacket(sock, payload, stack)
+
+		// Send ACK
+		err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+		if err != nil {
+			fmt.Printf("Error sending ACK: %v\n", err)
 		}
 
-		if tcpHdr.SeqNum == sock.Conn.Window.RecvNext {
-			// Process in-order packet
-			if err := processInOrderPacket(sock, payload, stack); err != nil {
-				fmt.Printf("Error processing in-order packet: %v\n", err)
-				return
-			}
-
-			// Try to process any buffered out-of-order packets
-			processBufferedPackets(sock, stack)
-		} else if tcpHdr.SeqNum > sock.Conn.Window.RecvNext {
-			// Handle out-of-order packet
-			if sock.Conn.ReceiveQueue == nil {
-				sock.Conn.ReceiveQueue = &PriorityQueue{}
-				heap.Init(sock.Conn.ReceiveQueue)
-			}
-
-			// Check if we already have this packet buffered
-			isDuplicate := false
-			for _, item := range *sock.Conn.ReceiveQueue {
-				if item.priority == tcpHdr.SeqNum {
-					isDuplicate = true
-					break
-				}
-			}
-
-			if !isDuplicate {
-				fmt.Printf("Buffering out-of-order packet: seq=%d, expecting=%d\n",
-					tcpHdr.SeqNum, sock.Conn.Window.RecvNext)
-				entry := &Item{
-					value:    payload,
-					priority: tcpHdr.SeqNum,
-				}
-				heap.Push(sock.Conn.ReceiveQueue, entry)
-			}
-
-			// Send duplicate ACK to trigger fast retransmit
-			err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
-			if err != nil {
-				fmt.Printf("Error sending duplicate ACK: %v\n", err)
-			}
-		}
-	} else {
-		fmt.Println("return ack")
+		//+=========+//
 		if tcpHdr.Flags&header.TCPFlagAck != 0 {
 			if tcpHdr.AckNum > sock.Conn.Window.SendUna {
 				bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
@@ -290,30 +238,65 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 				sock.Conn.Window.SendUna = tcpHdr.AckNum
 				fmt.Printf("ACK received - removed %d bytes, new SendUna: %d\n",
 					bytesAcked, sock.Conn.Window.SendUna)
+				sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
 			}
 		}
+		//+=========+//
+
+	} else {
+		fmt.Println("return ack")
+		/*
+			if tcpHdr.Flags&header.TCPFlagAck != 0 {
+			 	if tcpHdr.AckNum > sock.Conn.Window.SendUna {
+			 		bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
+
+			 		// Actually remove the acknowledged data from send buffer
+			 		discardBuf := make([]byte, bytesAcked)
+					n, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
+			 		if err != nil {
+			 			fmt.Printf("Error removing acked data from send buffer: %v\n", err)
+			 		} else {
+			 			fmt.Printf("Removed %d acked bytes from send buffer\n", n)
+			 		}
+			 		// Update SendUna after successful removal
+			 		sock.Conn.Window.SendUna = tcpHdr.AckNum
+			 		fmt.Printf("ACK received - removed %d bytes, new SendUna: %d\n",
+			 			bytesAcked, sock.Conn.Window.SendUna)
+			 		sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
+			 	}
+			 }*/
 	}
 }
 
 // Helper function to process in-order packets
 func processInOrderPacket(sock *Socket, payload []byte, stack *IPStack) error {
-	_, err := sock.Conn.Window.recvBuffer.Write(payload)
+	// Write the payload to receive buffer
+	written, err := sock.Conn.Window.recvBuffer.Write(payload)
 	if err != nil {
 		return fmt.Errorf("error writing to receive buffer: %v", err)
 	}
 
-	sock.Conn.Window.RecvNext += uint32(len(payload))
+	// Update sequence numbers
+	sock.Conn.Window.RecvNext += uint32(written)
 	sock.Conn.AckNum = sock.Conn.Window.RecvNext
 
-	// Signal data availability
-	select {
-	case sock.Conn.Window.DataAvailable <- struct{}{}:
-		fmt.Printf("Processed in-order packet: seq=%d\n", sock.Conn.Window.RecvNext-uint32(len(payload)))
-	default:
-		fmt.Println("Channel already has signal, skipped")
+	// Update receive window size
+	availSpace := sock.Conn.Window.recvBuffer.Free()
+	sock.Conn.Window.RecvWindowSize = uint32(availSpace)
+	fmt.Println(availSpace)
+
+	// Signal data availability - one signal per chunk of data
+	dataChunks := (written + 1023) / 1024 // Signal for every 1KB of data
+	for i := 0; i < dataChunks; i++ {
+		select {
+		case sock.Conn.Window.DataAvailable <- struct{}{}:
+			fmt.Printf("Sent data signal %d/%d for %d bytes\n", i+1, dataChunks, written)
+		default:
+			// Channel is full, which is fine - reader will get to it
+		}
 	}
 
-	// Send ACK
+	// Send ACK with updated window size
 	return stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
 }
 
@@ -323,17 +306,28 @@ func processBufferedPackets(sock *Socket, stack *IPStack) {
 		return
 	}
 
-	for sock.Conn.ReceiveQueue.Len() > 0 {
+	processed := true
+	for processed && sock.Conn.ReceiveQueue.Len() > 0 {
+		processed = false
 		item := (*sock.Conn.ReceiveQueue)[0] // Peek at next packet
-		if item.priority != sock.Conn.Window.RecvNext {
-			break
-		}
 
-		// Remove and process the packet
-		early := heap.Pop(sock.Conn.ReceiveQueue).(*Item)
-		if err := processInOrderPacket(sock, early.value, stack); err != nil {
-			fmt.Printf("Error processing buffered packet: %v\n", err)
-			return
+		// Check if this is the next expected packet
+		if item.priority == sock.Conn.Window.RecvNext {
+			// Remove and process the packet
+			early := heap.Pop(sock.Conn.ReceiveQueue).(*Item)
+			if err := processInOrderPacket(sock, early.value, stack); err != nil {
+				fmt.Printf("Error processing buffered packet: %v\n", err)
+				return
+			}
+			processed = true // Signal that we processed a packet
+
+			// Signal data availability
+			select {
+			case sock.Conn.Window.DataAvailable <- struct{}{}:
+				fmt.Printf("Sent data signal for buffered packet\n")
+			default:
+				// Channel is full, which is fine
+			}
 		}
 	}
 }
@@ -403,7 +397,6 @@ func recvTearDown(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *
 
 	//prob
 	delete(tcpStack.Sockets, sock.SID)
-
 }
 
 func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error {
@@ -421,13 +414,13 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
 		AckNum:     sock.Conn.AckNum,
 		DataOffset: 20,
 		Flags:      flags,
-		WindowSize: 65535, // Default window size
+		WindowSize: (uint16)(sock.Conn.Window.sendBuffer.Free()), // Default window size
 	}
 	localAddr = sock.Conn.LocalAddr
 	remoteAddr = sock.Conn.RemoteAddr
 
 	// Create TCP header bytes and compute checksum
-	checksum := iptcp_utils.ComputeTCPChecksum(&tcpHdr, localAddr, remoteAddr, nil)
+	checksum := iptcp_utils.ComputeTCPChecksum(&tcpHdr, localAddr, remoteAddr, data)
 	tcpHdr.Checksum = checksum
 	tcpHeaderBytes := make(header.TCP, iptcp_utils.TcpHeaderLen)
 	tcp := header.TCP(tcpHeaderBytes)
@@ -450,6 +443,5 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
 		Dst:      remoteAddr,
 		Options:  []byte{},
 	}
-
 	return SendIP(stack, &hdr, ipBytes)
 }
