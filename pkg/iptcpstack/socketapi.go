@@ -143,10 +143,6 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error
     if c.State != Established {
         return 0, fmt.Errorf("connection not established")
     }
-    if c.Window.RetransmissionQueue == nil {
-        c.Window.RetransmissionQueue = NewRetransmissionQueue()
-        go c.HandleRetransmission(stack, sock)
-    }
 
     var totalWritten int
     remaining := data

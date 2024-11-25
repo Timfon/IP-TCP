@@ -16,7 +16,7 @@ type RetransmissionEntry struct {
 	Data []byte
 	SeqNum uint32
 	SendTime time.Time
-	RTO time.Duration
+    Retries uint32
   }
   
 type RetransmissionQueue struct {
@@ -27,6 +27,7 @@ type RetransmissionQueue struct {
     beta float64         // RTO multiplier (typically 2.0)
     RTOMin time.Duration  // Minimum allowed RTO
     RTOMax time.Duration  // Maximum allowed RTO
+    RTO time.Duration
 } 
   
   //Initialize the retransmission queue
@@ -37,7 +38,7 @@ func NewRetransmissionQueue() *RetransmissionQueue {
         SRTT: 1 * time.Second,  // Initial SRTT guess
         alpha: 0.875,           // RFC793 recommended value (1 - 0.125)
         beta: 2.0,             // RTO multiplier
-        RTOMin: 1 * time.Second,
+        RTOMin: 1 * time.Millisecond,
         RTOMax: 60 * time.Second,
     }
 } 
@@ -118,7 +119,7 @@ func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket) {
             
             for i := 0; i < len(c.Window.RetransmissionQueue.Entries); i++ {
                 entry := c.Window.RetransmissionQueue.Entries[i]
-                if now.Sub(entry.SendTime) > entry.RTO {
+                if now.Sub(entry.SendTime) > RetransmissionQueue.RTO {
                     // Log retransmission with better details
                     fmt.Printf("Retransmitting seq=%d len=%d RTO=%v\n", 
                         entry.SeqNum, len(entry.Data), entry.RTO)
@@ -130,6 +131,7 @@ func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket) {
                     }
                     
                     entry.SendTime = now
+                    entry.Retries++;
                     // More gradual RTO backoff
                     entry.RTO = time.Duration(float64(entry.RTO) * 1.5)
                     if entry.RTO > c.Window.RetransmissionQueue.RTOMax {
@@ -173,6 +175,11 @@ func (rq *RetransmissionQueue) RemoveAckedEntries(ackNum uint32) {
     for _, entry := range rq.Entries {
         if entry.SeqNum + uint32(len(entry.Data)) > ackNum {
             newEntries = append(newEntries, entry)
+        }
+        else{
+            if entry.Retries == 0 {
+                
+            }
         }
     }
     rq.Entries = newEntries

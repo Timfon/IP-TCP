@@ -182,6 +182,10 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
           break
       }
   }
+
+    sock.Conn.Window.RetransmissionQueue = NewRetransmissionQueue()
+    go sock.Conn.HandleRetransmission(stack, sock)
+
 }
 
 // Simplify handleEstablished to just handle in-order data
