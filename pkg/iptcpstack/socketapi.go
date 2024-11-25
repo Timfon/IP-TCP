@@ -169,9 +169,9 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error
 		fmt.Printf("Window check: size=%d unacked=%d avail=%d\n",
 			c.Window.SendWindowSize, unackedData, availSpace)
 
-		if availSpace <= 0 {
+		if c.Window.ReadWindowSize <= 0 {
 			fmt.Printf("Zero window condition: unacked=%d window=%d\n",
-				unackedData, c.Window.SendWindowSize)
+				unackedData, c.Window.ReadWindowSize)
 			err := c.handleZeroWindow(stack, sock)
 			if err != nil {
 				return totalWritten, fmt.Errorf("zero window probe failed: %v", err)
