@@ -137,7 +137,7 @@ func TCPPacketHandler(packet *Packet, args []interface{}) {
 func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack, tcpstack *TCPStack) error {
 	//add new socket to socket table
 	l := sock.Listen
-	seqNum := rand.Uint32() % 100 * 1000
+	seqNum := rand.Uint32() >> 16
 	new_Connection := &VTCPConn{
 		State:      2,
 		LocalAddr:  packet.Header.Dst,

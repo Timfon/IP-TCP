@@ -240,7 +240,7 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
 
 	// Create new socket
 	localPort := uint16(rand.Uint32() >> 16)
-	seqNum := rand.Uint32() % 100 * 1000
+	seqNum := rand.Uint32() >> 16
 	conn := &VTCPConn{
 		State:      SynSent,
 		LocalAddr:  localAddr,
