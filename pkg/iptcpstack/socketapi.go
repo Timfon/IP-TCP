@@ -67,6 +67,8 @@ type VTCPConn struct {
 	Window       *Window
 	SID          int
 	ReceiveQueue *PriorityQueue
+
+	retransmissionStarted bool
 }
 
 type VTCPListener struct {
@@ -154,6 +156,11 @@ func (w *Window) RemoveAckedData(bytesAcked uint32) {
 func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *TCPStack) (int, error) {
 	if c.State != Established {
 		return 0, fmt.Errorf("connection not established")
+	}
+
+	if !c.retransmissionStarted {
+		go c.HandleRetransmission(stack, sock, tcpstack)
+		c.retransmissionStarted = true
 	}
 
 	currWritten := 0
@@ -292,7 +299,7 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
 	tcpStack.Sockets[sock.SID] = sock
 
 	// Initial SYN send
-	
+
 	err := ipStack.sendTCPPacket(sock, []byte{}, header.TCPFlagSyn)
 	if err != nil {
 		delete(tcpStack.Sockets, sock.SID)

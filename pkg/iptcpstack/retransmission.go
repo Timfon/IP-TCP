@@ -65,111 +65,136 @@ func (rq *RetransmissionQueue) updateRTT(measuredRTT time.Duration) {
 
 func (c *VTCPConn) handleZeroWindow(stack *IPStack, sock *Socket) error {
 	fmt.Println("ZERO WINDOW CONDITION DETECTED")
-	probeInterval := 1 * time.Second // Start with 1 second
+	maxProbes := 10
+	probeInterval := time.Second // Start with 1 second interval
+	maxBackoff := 60 * time.Second
 
-	probe := []byte{0} // Just send a zero byte as probe
+	// Create probe data - try to peek at first byte in send buffer
+	probe := []byte{0}
 	peekBuf := make([]byte, 1)
 	if n, err := c.Window.sendBuffer.Read(peekBuf); n == 1 && err == nil {
-		// If we successfully read a byte, use it as probe and put it back
 		probe[0] = peekBuf[0]
-		c.Window.sendBuffer.Write(peekBuf)
-		c.Window.SendNxt+=1
-		c.SeqNum+=1
+		c.Window.sendBuffer.Write(peekBuf) // Put the byte back
+		c.Window.SendNxt += 1
+		c.SeqNum += 1
 	}
-	for { // Limit max retries
-		// Send 1-byte probe
-		// Try to peek at first byte in send buffer if available
+
+	for i := 0; i < maxProbes; i++ {
+		// Add probe to retransmission queue
+		c.Window.RetransmissionQueue.AddEntry(probe, c.SeqNum)
+
+		// Send probe packet
 		err := stack.sendTCPPacket(sock, probe, header.TCPFlagAck)
 		if err != nil {
 			return fmt.Errorf("failed to send zero window probe: %v", err)
 		}
-		// Wait for response with exponential backoff
-		time.Sleep(probeInterval)
-		// Check if window has opened
-		fmt.Println("Checking window size:", c.Window.ReadWindowSize)
-		if c.Window.ReadWindowSize > 0 {
+
+		// Create channels for synchronization
+		windowUpdated := make(chan bool, 1)
+		timeout := make(chan bool, 1)
+
+		// Start timeout goroutine
+		go func() {
+			time.Sleep(probeInterval)
+			timeout <- true
+		}()
+
+		// Start window monitoring goroutine
+		go func() {
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+			
+			for {
+				select {
+				case <-ticker.C:
+					if c.Window.ReadWindowSize > 0 {
+						windowUpdated <- true
+						return
+					}
+				case <-timeout:
+					return
+				}
+			}
+		}()
+
+		// Wait for either window update or timeout
+		select {
+		case <-windowUpdated:
+			fmt.Printf("Window opened: new size %d\n", c.Window.ReadWindowSize)
 			return nil
+		case <-timeout:
+			if probeInterval < maxBackoff {
+				probeInterval *= 2 // Exponential backoff
+			}
+			fmt.Printf("Probe timeout %d/%d, next interval: %v\n", 
+				i+1, maxProbes, probeInterval)
+			continue
 		}
-		// Exponential backoff for probe interval
 	}
-	return fmt.Errorf("zero window condition persisted after max retries")
+	return fmt.Errorf("zero window condition persisted after %d probes", maxProbes)
 }
 
 func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket, tcpStack *TCPStack) error {
-	// Check packets more frequently for testing on a lossy network
-	ticker := time.NewTicker(time.Millisecond)
-	defer ticker.Stop()
+    ticker := time.NewTicker(time.Millisecond * 100)
+    defer ticker.Stop()
+    for {
+        select {
+        case <-ticker.C:
+            if c.State != Established {
+                return nil
+            }
 
-	for {
-		select {
-		case <-ticker.C:
-			if c.State != Established {
-				return nil // Exit if connection is no longer established
-			}
+            c.Window.RetransmissionQueue.mutex.Lock()
+            now := time.Now()
 
-			c.Window.RetransmissionQueue.mutex.Lock()
-			now := time.Now()
+            newEntries := make([]*RetransmissionEntry, 0)
+            for _, entry := range c.Window.RetransmissionQueue.Entries {
+                // Check if packet is already fully acknowledged
+                if entry.SeqNum+uint32(len(entry.Data)) <= c.Window.SendUna {
+                    continue // Skip acknowledged packets
+                }
 
-			// Check each entry in the retransmission queue
-			for _, entry := range c.Window.RetransmissionQueue.Entries {
-				// Skip entries that are already acknowledged
-				if entry.SeqNum+uint32(len(entry.Data)) <= c.Window.SendUna {
-					continue
-				}
+                // Keep unacknowledged packets in the queue
+                newEntries = append(newEntries, entry)
 
-				timeSinceLastSend := now.Sub(entry.SendTime)
+                timeSinceLastSend := now.Sub(entry.SendTime)
+                if timeSinceLastSend >= entry.RTO {
+                    // Double check it's still not acknowledged
+                    if entry.SeqNum+uint32(len(entry.Data)) > c.Window.SendUna {
+                        if entry.Retries >= maxRetries {
+                            c.Window.RetransmissionQueue.mutex.Unlock()
+                            tcpStack.Mu.Lock()
+                            delete(tcpStack.Sockets, sock.SID)
+                            tcpStack.Mu.Unlock()
+                            return fmt.Errorf("connection timeout after %d retries", maxRetries)
+                        }
 
-				// If RTO has elapsed since last send
-				if timeSinceLastSend >= c.Window.RetransmissionQueue.RTO {
-					if entry.Retries >= maxRetries {
-						c.Window.RetransmissionQueue.mutex.Unlock()
-						tcpStack.Mu.Lock()
-						delete(tcpStack.Sockets, sock.SID)
-						tcpStack.Mu.Unlock()
-						return fmt.Errorf("connection timeout after %d retries", maxRetries)
-					}
+                        fmt.Printf("Retransmitting unacked packet (Seq: %d, Retry: %d/%d, Last Acked: %d)\n",
+                            entry.SeqNum, entry.Retries+1, maxRetries, c.Window.SendUna)
 
-					// Log before sending to ensure we see the retransmission attempt
-					fmt.Printf("Retransmitting packet (Seq: %d, Retry: %d/%d, RTO: %v)\n",
-						entry.SeqNum, entry.Retries+1, maxRetries, entry.RTO)
+                        err := stack.sendTCPPacket(sock, entry.Data, header.TCPFlagAck)
+                        if err != nil {
+                            c.Window.RetransmissionQueue.mutex.Unlock()
+                            return fmt.Errorf("failed to retransmit packet: %v", err)
+                        }
 
-					// Handle zero window condition
-					if c.Window.ReadWindowSize == 0 {
-						c.Window.RetransmissionQueue.mutex.Unlock()
-						if err := c.handleZeroWindow(stack, sock); err != nil {
-							return fmt.Errorf("zero window handling failed: %v", err)
-						}
-						c.Window.RetransmissionQueue.mutex.Lock()
-						continue
-					}
+                        entry.Retries++
+                        entry.SendTime = now
+                        entry.RTO *= 2
+                        if entry.RTO > c.Window.RetransmissionQueue.RTOMax {
+                            entry.RTO = c.Window.RetransmissionQueue.RTOMax
+                        }
 
-					// Retransmit the packet
-					err := stack.sendTCPPacket(sock, entry.Data, header.TCPFlagAck)
-					if err != nil {
-						c.Window.RetransmissionQueue.mutex.Unlock()
-						return fmt.Errorf("failed to retransmit packet: %v", err)
-					}
+                        time.Sleep(10 * time.Millisecond)
+                    }
+                }
+            }
 
-					// Update entry information
-					entry.Retries++
-					entry.SendTime = now
-					entry.RTO = c.Window.RetransmissionQueue.RTO
-
-					// Exponential backoff for RTO
-					for i := 0; uint32(i) < entry.Retries; i++ {
-						entry.RTO *= 2
-					}
-					if entry.RTO > c.Window.RetransmissionQueue.RTOMax {
-						entry.RTO =  c.Window.RetransmissionQueue.RTOMax
-					}
-
-					// Add some spacing between retransmissions of different packets
-					time.Sleep(10 * time.Millisecond)
-				}
-			}
-			c.Window.RetransmissionQueue.mutex.Unlock()
-		}
-	}
+            // Update queue to only contain unacknowledged packets
+            c.Window.RetransmissionQueue.Entries = newEntries
+            c.Window.RetransmissionQueue.mutex.Unlock()
+        }
+    }
 }
 
 func (rq *RetransmissionQueue) AddEntry(data []byte, seqNum uint32) {

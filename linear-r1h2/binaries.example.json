@@ -1,9 +1,9 @@
 {
  "h1": {
-  "binary_path": "./reference/vhost"
+  "binary_path": "./vhost"
  },
  "h2": {
-  "binary_path": "./vhost"
+  "binary_path": "./reference/vhost"
  },
  "r1": {
   "binary_path": "./reference/vrouter"
