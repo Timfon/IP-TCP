@@ -63,6 +63,7 @@ func (rq *RetransmissionQueue) updateRTT(measuredRTT time.Duration) {
 }
 
 func (c *VTCPConn) handleZeroWindow(stack *IPStack, sock *Socket) error {
+	fmt.Println("ZERO WINDOW CONDITION DETECTED")
 	probeInterval := 1 * time.Second // Start with 1 second
 	maxProbeInterval := 60 * time.Second
 

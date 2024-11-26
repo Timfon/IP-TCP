@@ -155,17 +155,34 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *T
 	if c.State != Established {
 		return 0, fmt.Errorf("connection not established")
 	}
+
 	currWritten := 0
 	c.Window.SendLBW = c.Window.SendNxt + uint32(len(data))
+
 	for c.Window.SendNxt < c.Window.SendLBW {
 		// Get available space from both send buffer and receiver window
 		sendBufferSpace := c.Window.sendBuffer.Free()
 		receiverWindow := int(c.Window.ReadWindowSize)
+
+		// Check for zero window condition
+		fmt.Println(receiverWindow)
+		if receiverWindow == 0 || c.Window.recvBuffer.IsFull() {
+			fmt.Printf("Zero window detected, starting window probing\n")
+			err := c.handleZeroWindow(stack, sock)
+			if err != nil {
+				return currWritten, fmt.Errorf("zero window probe failed: %v", err)
+			}
+			// After successful probe, get updated window size
+			receiverWindow = int(c.Window.ReadWindowSize)
+		}
+
 		availableSpace := min(sendBufferSpace, receiverWindow)
+
 		// If we have space to write
 		if availableSpace > 0 {
-			// Limit each write to MSS (1024 in this case)
+			// Limit each write to MSS (512 in this case)
 			writeLen := min(min(availableSpace, 512), len(data)-currWritten)
+
 			// Write to send buffer
 			n, err := c.Window.sendBuffer.Write(data[currWritten : currWritten+writeLen])
 			if err != nil {
@@ -184,19 +201,17 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *T
 			c.SeqNum += uint32(n)
 			c.Window.SendNxt += uint32(n)
 			currWritten += n
-		}
-
-		// If we haven't written everything, wait before trying again
-		if currWritten < len(data) {
-			// Wait a bit before trying again (use retransmission timeout as reference)
-			if c.Window.RetransmissionQueue.RTO > 0 {
-				time.Sleep(c.Window.RetransmissionQueue.RTO)
+		} else {
+			// No space available, wait before retrying
+			// Use a shorter sleep when window is non-zero but full
+			if receiverWindow > 0 {
+				time.Sleep(2 * time.Millisecond)
 			} else {
-				//time.Sleep(100 * time.Millisecond) // Default fallback
+				// Use longer sleep when waiting for zero window probe response
+				time.Sleep(10 * time.Millisecond)
 			}
 		}
 	}
-
 	return currWritten, nil
 }
 
