@@ -25,6 +25,8 @@ const (
 	CloseWait   SocketStatus = 6
 	TimeWait    SocketStatus = 7
 	LastAck     SocketStatus = 8
+
+	TimeWaitDuration = 15 * time.Second
 )
 
 type Socket struct {
@@ -209,16 +211,29 @@ func min(a, b int) int {
 }
 
 func (c *VTCPConn) VClose(stack *IPStack, sock *Socket) error {
-	if c.State != Established {
-		return fmt.Errorf("connection not established, cannot begin close")
-	}
-
-	err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
-
-	if err != nil {
-		return fmt.Errorf("failed to send initial FIN packet: %v", err)
-	}
-	return nil
+	switch c.State {
+    case Established:
+        err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
+        if err != nil {
+            return fmt.Errorf("failed to send FIN packet: %v", err)
+        }
+        c.State = FinWait1
+        fmt.Println("Sent FIN, moving to FIN_WAIT_1")
+        
+    case CloseWait:
+        // When in CLOSE_WAIT, send FIN and move to LAST_ACK
+        err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
+        if err != nil {
+            return fmt.Errorf("failed to send FIN packet: %v", err)
+        }
+        c.State = LastAck
+        fmt.Println("Sent FIN, moving to LAST_ACK")
+        
+    default:
+        return fmt.Errorf("cannot close connection in current state: %v", c.State)
+    }
+    
+    return nil
 }
 
 func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStack) (*VTCPConn, error) {

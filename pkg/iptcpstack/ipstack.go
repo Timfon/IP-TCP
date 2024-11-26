@@ -79,7 +79,7 @@ type IPStack struct {
 	Neighbors   []lnxconfig.NeighborConfig
 	RoutingMode lnxconfig.RoutingMode
 
-  TcpStack *TCPStack
+  	TcpStack *TCPStack
 
 	// ROUTERS ONLY:  Neighbors to send RIP packets
 	RipNeighbors []netip.Addr
