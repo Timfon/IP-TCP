@@ -227,14 +227,15 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 		} else if tcpHdr.SeqNum == sock.Conn.Window.RecvNext - 1{
 			already_read := sock.Conn.Window.RecvNext - tcpHdr.SeqNum
 			payload = payload[already_read:]
-		
-			err := processInOrderPacket(sock, payload, stack)
-			if err != nil {
-				fmt.Printf("Error sending ACK: %v\n", err)
-				
+			if len(payload) > 0{
+				err := processInOrderPacket(sock, payload, stack)
+				if err != nil {
+					fmt.Printf("Error sending ACK: %v\n", err)
+					
+				}
+				processBufferedPackets(sock, stack)
 			}
-			processBufferedPackets(sock, stack)
-		} else {
+		} else  if tcpHdr.SeqNum > sock.Conn.Window.RecvNext {
 			fmt.Printf("Early Arrival packet - adding to queue, expected %v, got %v\n",sock.Conn.Window.RecvNext,  tcpHdr.SeqNum)
             entry:= &Item{
                 value: payload,
@@ -326,21 +327,25 @@ func processBufferedPackets(sock *Socket, stack *IPStack) error{
 			sock.Conn.Window.RecvWindowSize = uint32(availSpace)
 			
 		} else if item.priority == sock.Conn.Window.RecvNext - 1{
-			already_read := sock.Conn.Window.RecvNext - item.priority
-			payload := item.value[already_read:] 
+				already_read := sock.Conn.Window.RecvNext - item.priority
+				payload := item.value[already_read:] 
+				if len(payload) > 0{
 
-			written, err := sock.Conn.Window.recvBuffer.Write(payload)
-			if err != nil {
-				return fmt.Errorf("error writing to receive buffer: %v", err)
-			}
-			// Update sequence numbers
+				written, err := sock.Conn.Window.recvBuffer.Write(payload)
+				if err != nil {
+					return fmt.Errorf("error writing to receive buffer: %v", err)
+				}
+				// Update sequence numbers
 
-			sock.Conn.Window.RecvNext += uint32(written)
-			sock.Conn.AckNum = sock.Conn.Window.RecvNext
+				sock.Conn.Window.RecvNext += uint32(written)
+				sock.Conn.AckNum = sock.Conn.Window.RecvNext
 
-			// Update receive window size
-			availSpace := sock.Conn.Window.recvBuffer.Free()
-			sock.Conn.Window.RecvWindowSize = uint32(availSpace)
+				// Update receive window size
+				availSpace := sock.Conn.Window.recvBuffer.Free()
+				sock.Conn.Window.RecvWindowSize = uint32(availSpace)
+				
+				}
+			
 		} else if item.priority > sock.Conn.Window.RecvNext {
 			heap.Push(sock.Conn.ReceiveQueue, item)
 			break

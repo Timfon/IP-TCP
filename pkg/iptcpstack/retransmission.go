@@ -73,6 +73,8 @@ func (c *VTCPConn) handleZeroWindow(stack *IPStack, sock *Socket) error {
 		// If we successfully read a byte, use it as probe and put it back
 		probe[0] = peekBuf[0]
 		c.Window.sendBuffer.Write(peekBuf)
+		c.Window.SendNxt+=1
+		c.SeqNum+=1
 	}
 	for { // Limit max retries
 		// Send 1-byte probe
