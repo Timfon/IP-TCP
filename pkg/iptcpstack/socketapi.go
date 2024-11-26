@@ -107,7 +107,7 @@ func (c *VTCPConn) VRead(buf []byte) (int, error) {
 	// Calculate available data using TCP sequence numbers
 	availData := int(c.Window.RecvNext - c.Window.RecvLBR)
 	//fmt.Printf("Debug - Available data: %d (RecvNext: %d, RecvLBR: %d)\n",
-		//availData, c.Window.RecvNext, c.Window.RecvLBR)
+	//availData, c.Window.RecvNext, c.Window.RecvLBR)
 
 	// Update receive window size based on buffer space
 	c.Window.RecvWindowSize = uint32(c.Window.recvBuffer.Free())
@@ -166,6 +166,7 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *T
 
 		// Check for zero window condition
 		fmt.Println(receiverWindow)
+		fmt.Println(c.Window.recvBuffer.IsFull())
 		if receiverWindow == 0 || c.Window.recvBuffer.IsFull() {
 			fmt.Printf("Zero window detected, starting window probing\n")
 			err := c.handleZeroWindow(stack, sock)
@@ -370,19 +371,14 @@ func ACommand(port uint16, tcpstack *TCPStack) {
 		return
 	}
 	// Start a goroutine to continuously accept connections
-	//fmt.Println("Acommand")
 	go func() {
 		for {
-			//fmt.Println("Acommand1")
 			_, err := listenConn.VAccept()
-			//fmt.Println("Acommand2")
 			if err != nil {
 				// TODO: If the listener is closed, exit the goroutine
 				fmt.Println(err)
 				continue
 			}
-			// The connection is now established and ready for use by other REPL commands
-			// We don't need to do anything else with it here
 		}
 	}()
 }
