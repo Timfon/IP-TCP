@@ -65,7 +65,6 @@ func (rq *RetransmissionQueue) updateRTT(measuredRTT time.Duration) {
 func (c *VTCPConn) handleZeroWindow(stack *IPStack, sock *Socket) error {
 	fmt.Println("ZERO WINDOW CONDITION DETECTED")
 	probeInterval := 1 * time.Second // Start with 1 second
-	maxProbeInterval := 60 * time.Second
 
 	probe := []byte{0} // Just send a zero byte as probe
 	peekBuf := make([]byte, 1)
@@ -74,7 +73,7 @@ func (c *VTCPConn) handleZeroWindow(stack *IPStack, sock *Socket) error {
 		probe[0] = peekBuf[0]
 		c.Window.sendBuffer.Write(peekBuf)
 	}
-	for retries := 0; retries < 10; retries++ { // Limit max retries
+	for { // Limit max retries
 		// Send 1-byte probe
 		// Try to peek at first byte in send buffer if available
 		err := stack.sendTCPPacket(sock, probe, header.TCPFlagAck)
@@ -84,15 +83,11 @@ func (c *VTCPConn) handleZeroWindow(stack *IPStack, sock *Socket) error {
 		// Wait for response with exponential backoff
 		time.Sleep(probeInterval)
 		// Check if window has opened
-		fmt.Println("Checking window size:", c.Window.SendWindowSize)
-		if c.Window.ReadWindowSize > 0 {
+		fmt.Println("Checking window size:", c.Window.recvBuffer.Free())
+		if c.Window.recvBuffer.Free() > 0 {
 			return nil
 		}
 		// Exponential backoff for probe interval
-		probeInterval *= 2
-		if probeInterval > maxProbeInterval {
-			probeInterval = maxProbeInterval
-		}
 	}
 	return fmt.Errorf("zero window condition persisted after max retries")
 }

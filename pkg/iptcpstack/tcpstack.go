@@ -206,8 +206,8 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 		}
 	}
 
-	sock.Conn.Window.RetransmissionQueue = NewRetransmissionQueue()
-	go sock.Conn.HandleRetransmission(stack, sock, tcpstack)
+	// sock.Conn.Window.RetransmissionQueue = NewRetransmissionQueue()
+	// go sock.Conn.HandleRetransmission(stack, sock, tcpstack)
 }
 
 func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
@@ -246,8 +246,8 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 		}
 		/* */
 		} else {
-		fmt.Println("Windowsize tcp: ", tcpHdr.WindowSize)
-		fmt.Println("SendBuffer size: ", sock.Conn.Window.sendBuffer.Free())
+		//fmt.Println("Windowsize tcp: ", tcpHdr.WindowSize)
+		//fmt.Println("SendBuffer size: ", sock.Conn.Window.sendBuffer.Free())
 		sock.Conn.Window.ReadWindowSize = uint32(tcpHdr.WindowSize)
 		if tcpHdr.AckNum > sock.Conn.Window.SendUna {
 			bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
