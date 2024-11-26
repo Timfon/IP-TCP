@@ -75,6 +75,7 @@ type VTCPListener struct {
 }
 
 func NewWindow(size int) *Window {
+	fmt.Println(size)
 	w := &Window{
 		recvBuffer:          ringbuffer.New(int(size)),
 		sendBuffer:          ringbuffer.New(int(size)),
@@ -85,6 +86,7 @@ func NewWindow(size int) *Window {
 		SendLBW:             0,
 		RetransmissionQueue: NewRetransmissionQueue(),
 	}
+	fmt.Println(w.recvBuffer.Free())
 	return w
 }
 
@@ -150,64 +152,66 @@ func (w *Window) RemoveAckedData(bytesAcked uint32) {
 	w.sendBuffer.Read(tmp) // Remove the acknowledged data from send buffer
 }
 
-func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket) (int, error) {
-	if c.State != Established {
-		return 0, fmt.Errorf("connection not established")
-	}
+func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *TCPStack) (int, error) {
+    if c.State != Established {
+        return 0, fmt.Errorf("connection not established")
+    }
 
-	var totalWritten int
-	remaining := data
+    currWritten := 0
 
-	for len(remaining) > 0 {
-		// Calculate unacked data - make sure to handle wrap-around
-		unackedData := uint32(0)
-		if c.Window.SendLBW > c.Window.SendNxt {
-			unackedData = c.Window.SendLBW - c.Window.SendNxt
-		}
+	c.Window.SendLBW = c.Window.SendNxt + uint32(len(data))
+    for c.Window.SendNxt < c.Window.SendLBW {
+        // Get available space from both send buffer and receiver window
+        sendBufferSpace := c.Window.sendBuffer.Free()
+        receiverWindow := int(c.Window.ReadWindowSize)
+        availableSpace := min(sendBufferSpace, receiverWindow)
+        // If we have space to write
+        if availableSpace > 0 {
+            // Limit each write to MSS (1024 in this case)
+            writeLen := min(min(availableSpace, 1024), len(data) - currWritten)
+            
+            // Write to send buffer
+            n, err := c.Window.sendBuffer.Write(data[currWritten : currWritten+writeLen])
+            if err != nil {
+                return currWritten, fmt.Errorf("failed to write to send buffer: %v", err)
+            }
 
-		availSpace := int(c.Window.SendWindowSize - c.Window.SendNxt)
-		fmt.Printf("Window check: size=%d unacked=%d avail=%d\n",
-			c.Window.SendWindowSize, unackedData, availSpace)
+            // Add to retransmission queue
+            c.Window.RetransmissionQueue.AddEntry(data[currWritten:currWritten+n], c.SeqNum)
 
-		if c.Window.ReadWindowSize <= 0 {
-			fmt.Printf("Zero window condition: unacked=%d window=%d\n",
-				unackedData, c.Window.ReadWindowSize)
-			err := c.handleZeroWindow(stack, sock)
-			if err != nil {
-				return totalWritten, fmt.Errorf("zero window probe failed: %v", err)
-			}
-			continue
-		}
+            // Send the data
+            err = stack.sendTCPPacket(sock, data[currWritten:currWritten+n], header.TCPFlagAck)
+            if err != nil {
+                return currWritten, fmt.Errorf("failed to send data: %v", err)
+            }
 
-		// Determine how much we can send
-		writeLen := len(remaining)
-		if writeLen > availSpace {
-			writeLen = availSpace
-		}
-		if writeLen > 1024 {
-			writeLen = 1024
-		}
+            //c.SeqNum += uint32(n)
+            c.Window.SendNxt+= uint32(n)
+            currWritten += n
+        }
 
-		// Write to send buffer
-		n, err := c.Window.sendBuffer.Write(remaining[:writeLen])
-		if err != nil {
-			return totalWritten, fmt.Errorf("failed to write to send buffer: %v", err)
-		}
+        // If we haven't written everything, wait before trying again
+        if currWritten < len(data) {
+            // Wait a bit before trying again (use retransmission timeout as reference)
+            if c.Window.RetransmissionQueue.RTO > 0 {
+                time.Sleep(c.Window.RetransmissionQueue.RTO)
+            } else {
+                time.Sleep(100 * time.Millisecond) // Default fallback
+            }
+        }
+    }
 
-		c.Window.SendLBW += uint32(n)
-
-		// Send the data
-		err = stack.sendTCPPacket(sock, remaining[:writeLen], header.TCPFlagAck)
-		if err != nil {
-			return totalWritten, fmt.Errorf("failed to send data: %v", err)
-		}
-
-		remaining = remaining[writeLen:]
-		totalWritten += n
-		c.SeqNum += uint32(n)
-	}
-	return totalWritten, nil
+    return currWritten, nil
 }
+
+// Utility function to find minimum of two integers
+func min(a, b int) int {
+    if a < b {
+        return a
+    }
+    return b
+}
+
 
 func (c *VTCPConn) VClose(stack *IPStack, sock *Socket) error {
 	if c.State != Established {
@@ -249,7 +253,7 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
 		RemotePort: port,
 		SeqNum:     seqNum,
 		AckNum:     0,
-		Window:     NewWindow(66535),
+		Window:     NewWindow(65535),
 		SID:        tcpStack.NextSocketID,
 	}
 
@@ -405,13 +409,12 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
 		bytesWritten := 0
 
 		for bytesWritten < n {
-			written, err := conn.VWrite(buf[bytesWritten:n], stack, tcpStack.Sockets[conn.SID])
+			written, err := conn.VWrite(buf[bytesWritten:n], stack, tcpStack.Sockets[conn.SID], tcpStack)
 			if err != nil {
 				return totalBytes, fmt.Errorf("failed to write to connection: %v", err)
 			}
 			bytesWritten += written
 			totalBytes += written
-			conn.SeqNum += uint32(written)
 			fmt.Printf("Wrote %v bytes", written)
 		}
 

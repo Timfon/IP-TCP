@@ -258,7 +258,7 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
         continue
       }
 	  conn := tcpstack.Sockets[int(sid)].Conn
-      bytesWritten, err := conn.VWrite(messageBytes, stack, tcpstack.Sockets[int(sid)])
+      bytesWritten, err := conn.VWrite(messageBytes, stack, tcpstack.Sockets[int(sid)], tcpstack)
       if err != nil {
         fmt.Println(err)
         continue

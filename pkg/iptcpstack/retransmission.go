@@ -1,11 +1,8 @@
 package iptcpstack
-
 import (
 	"fmt"
-	"math"
 	"sync"
 	"time"
-
 	"github.com/google/netstack/tcpip/header"
 )
 
@@ -77,19 +74,13 @@ func (c *VTCPConn) handleZeroWindow(stack *IPStack, sock *Socket) error {
 	}
 	for retries := 0; retries < 10; retries++ { // Limit max retries
 		// Send 1-byte probe
-
-
 		// Try to peek at first byte in send buffer if available
-
-
 		err := stack.sendTCPPacket(sock, probe, header.TCPFlagAck)
 		if err != nil {
 			return fmt.Errorf("failed to send zero window probe: %v", err)
 		}
-
 		// Wait for response with exponential backoff
 		time.Sleep(probeInterval)
-
 		// Check if window has opened
 		fmt.Println("Checking window size:", c.Window.SendWindowSize)
 		if c.Window.ReadWindowSize > 0 {
@@ -104,52 +95,51 @@ func (c *VTCPConn) handleZeroWindow(stack *IPStack, sock *Socket) error {
 	return fmt.Errorf("zero window condition persisted after max retries")
 }
 
-func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket, tcpStack *TCPStack) error {
-	ticker := time.NewTicker(50 * time.Millisecond) // More frequent checks
-	defer ticker.Stop()
+// func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket, tcpStack *TCPStack) error {
+// 	ticker := time.NewTicker(50 * time.Millisecond) // More frequent checks
+// 	defer ticker.Stop()
+// 	for {
+// 		select {
+// 		case <-ticker.C:
+// 			c.Window.RetransmissionQueue.mutex.Lock()
+// 			now := time.Now()
 
-	for {
-		select {
-		case <-ticker.C:
-			c.Window.RetransmissionQueue.mutex.Lock()
-			now := time.Now()
+// 			for i := 0; i < len(c.Window.RetransmissionQueue.Entries); i++ {
+// 				entry := c.Window.RetransmissionQueue.Entries[i]
 
-			for i := 0; i < len(c.Window.RetransmissionQueue.Entries); i++ {
-				entry := c.Window.RetransmissionQueue.Entries[i]
+// 				timer := min(c.Window.RetransmissionQueue.RTO*time.Duration(math.Pow(2, float64(entry.Retries))), c.Window.RetransmissionQueue.RTOMax)
+// 				if now.Sub(entry.SendTime) > timer {
+// 					// Log retransmission with better details
+// 					if entry.Retries == 3 {
+// 						fmt.Printf("Max Retransmission count reached, stopping sender")
+// 						tcpStack.Mu.Lock()
+// 						delete(tcpStack.Sockets, sock.SID)
+// 						tcpStack.Mu.Unlock()
+// 						return fmt.Errorf("max retransmission count reached, stopping sender")
+// 					}
+// 					fmt.Printf("Retransmitting seq=%d len=%d RTO=%v\n",
+// 						entry.SeqNum, len(entry.Data), c.Window.RetransmissionQueue.RTO)
 
-				timer := min(c.Window.RetransmissionQueue.RTO*time.Duration(math.Pow(2, float64(entry.Retries))), c.Window.RetransmissionQueue.RTOMax)
-				if now.Sub(entry.SendTime) > timer {
-					// Log retransmission with better details
-					if entry.Retries == 3 {
-						fmt.Printf("Max Retransmission count reached, stopping sender")
-						tcpStack.Mu.Lock()
-						delete(tcpStack.Sockets, sock.SID)
-						tcpStack.Mu.Unlock()
-						return fmt.Errorf("max retransmission count reached, stopping sender")
-					}
-					fmt.Printf("Retransmitting seq=%d len=%d RTO=%v\n",
-						entry.SeqNum, len(entry.Data), c.Window.RetransmissionQueue.RTO)
+// 					err := stack.sendTCPPacket(sock, entry.Data, header.TCPFlagAck)
+// 					if err != nil {
+// 						fmt.Printf("Retransmission failed: %v\n", err)
+// 						continue
+// 					}
 
-					err := stack.sendTCPPacket(sock, entry.Data, header.TCPFlagAck)
-					if err != nil {
-						fmt.Printf("Retransmission failed: %v\n", err)
-						continue
-					}
+// 					entry.SendTime = now
+// 					entry.Retries++
 
-					entry.SendTime = now
-					entry.Retries++
-
-					// Exponential backoff on queue-wide RTO
-					c.Window.RetransmissionQueue.RTO = time.Duration(float64(c.Window.RetransmissionQueue.RTO) * 1.5)
-					if c.Window.RetransmissionQueue.RTO > c.Window.RetransmissionQueue.RTOMax {
-						c.Window.RetransmissionQueue.RTO = c.Window.RetransmissionQueue.RTOMax
-					}
-				}
-			}
-			c.Window.RetransmissionQueue.mutex.Unlock()
-		}
-	}
-}
+// 					// Exponential backoff on queue-wide RTO
+// 					c.Window.RetransmissionQueue.RTO = time.Duration(float64(c.Window.RetransmissionQueue.RTO) * 1.5)
+// 					if c.Window.RetransmissionQueue.RTO > c.Window.RetransmissionQueue.RTOMax {
+// 						c.Window.RetransmissionQueue.RTO = c.Window.RetransmissionQueue.RTOMax
+// 					}
+// 				}
+// 			}
+// 			c.Window.RetransmissionQueue.mutex.Unlock()
+// 		}
+// 	}
+// }
 
 func (rq *RetransmissionQueue) AddEntry(data []byte, seqNum uint32) {
 	rq.mutex.Lock()

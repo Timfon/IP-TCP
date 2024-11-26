@@ -281,18 +281,15 @@ func SendIP(stack *IPStack, header *ipv4header.IPv4Header, data []byte) error {
 func ReceiveIP(route Route, stack *IPStack, tcpstack *TCPStack) (*Packet, *net.UDPAddr, error) {
 	conn := route.Iface.UdpSocket
 	addr := route.VirtualIP
-
 	for {
 		buffer := make([]byte, MAX_MESSAGE_SIZE)
 		n, _, err := conn.ReadFromUDP(buffer)
 		if err != nil {
 			log.Panicln("Error reading from UDP socket ", err)
 		}
-
 		if !route.Iface.UpOrDown {
 			continue
 		}
-
 		// Marshal the received byte array into a UDP header
 		// NOTE:  This does not validate the checksum or check any fields
 		// (You'll need to do this part yourself)

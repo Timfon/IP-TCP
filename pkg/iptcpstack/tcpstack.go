@@ -152,7 +152,7 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 	// Initialize window tracking - for first data packet, we expect the original sequence number
 	new_Connection.Window.RecvNext = tcpHdr.SeqNum
 	new_Connection.Window.RecvLBR = tcpHdr.SeqNum
-	new_Connection.Window.ReadWindowSize = tcpHdr.WindowSize
+	new_Connection.Window.ReadWindowSize = uint32(tcpHdr.WindowSize)
 
 	newSocket := Socket{
 		SID:  tcpstack.NextSocketID,
@@ -177,7 +177,7 @@ func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields,
 	sock.Conn.AckNum = tcpHdr.SeqNum + 1
 	sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
 	sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
-	sock.Conn.Window.ReadWindowSize = tcpHdr.WindowSize
+	sock.Conn.Window.ReadWindowSize = uint32(tcpHdr.WindowSize)
 	// fmt.Printf("Debug - Initialized RecvNext to %d\n", sock.Conn.Window.RecvNext)
 	fmt.Println("SYN-ACK received, connection established")
 	// Send ACK
@@ -203,7 +203,7 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 	}
 
 	sock.Conn.Window.RetransmissionQueue = NewRetransmissionQueue()
-	go sock.Conn.HandleRetransmission(stack, sock, tcpstack)
+	//go sock.Conn.HandleRetransmission(stack, sock, tcpstack)
 
 }
 
@@ -212,10 +212,9 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 	payload := packet.Body[payloadOffset:]
 
 	sock.Conn.SeqNum = tcpHdr.AckNum
-
 	if len(payload) > 0 {
 		// Write to receive buffer
-		err:= processInOrderPacket(sock, payload, stack)
+		err := processInOrderPacket(sock, payload, stack)
 
 		// Send ACK
 		if err != nil {
@@ -224,29 +223,6 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 
 		//+=========+//
 		/*
-		if tcpHdr.AckNum > sock.Conn.Window.SendUna {
-			bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
-
-			// Actually remove the acknowledged data from send buffer
-			discardBuf := make([]byte, bytesAcked)
-			n, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
-			if err != nil {
-				fmt.Printf("Error removing acked data from send buffer: %v\n", err)
-			} else {
-				fmt.Printf("Removed %d acked bytes from send buffer\n", n)
-			}
-			// Update SendUna after successful removal
-			sock.Conn.Window.SendUna = tcpHdr.AckNum
-			fmt.Printf("ACK received - removed %d bytes, new SendUna: %d\n",
-				bytesAcked, sock.Conn.Window.SendUna)
-			sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
-		}*/
-		//+=========+//
-
-	} else {
-		fmt.Println("return ack")
-		sock.Conn.Window.ReadWindowSize = tcpHdr.WindowSize	
-		if tcpHdr.Flags&header.TCPFlagAck != 0 {
 			if tcpHdr.AckNum > sock.Conn.Window.SendUna {
 				bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
 
@@ -263,8 +239,29 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 				fmt.Printf("ACK received - removed %d bytes, new SendUna: %d\n",
 					bytesAcked, sock.Conn.Window.SendUna)
 				sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
+			}*/
+		//+=========+//
+	} else {
+		fmt.Println("Windowsize tcp", tcpHdr.WindowSize)
+		sock.Conn.Window.ReadWindowSize = uint32(tcpHdr.WindowSize)
+		if tcpHdr.AckNum > sock.Conn.Window.SendUna {
+			bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
+
+			// Actually remove the acknowledged data from send buffer
+			discardBuf := make([]byte, bytesAcked)
+			n, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
+			if err != nil {
+				fmt.Printf("Error removing acked data from send buffer: %v\n", err)
+			} else {
+				fmt.Printf("Removed %d acked bytes from send buffer\n", n)
 			}
-			}
+			// Update SendUna after successful removal
+			sock.Conn.Window.SendUna = tcpHdr.AckNum
+			fmt.Printf("ACK received - removed %d bytes, new SendUna: %d\n",
+				bytesAcked, sock.Conn.Window.SendUna)
+			sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
+		}
+		
 	}
 }
 
@@ -275,7 +272,6 @@ func processInOrderPacket(sock *Socket, payload []byte, stack *IPStack) error {
 	if err != nil {
 		return fmt.Errorf("error writing to receive buffer: %v", err)
 	}
-
 	// Update sequence numbers
 	sock.Conn.Window.RecvNext += uint32(written)
 	sock.Conn.AckNum = sock.Conn.Window.RecvNext
@@ -295,7 +291,6 @@ func processInOrderPacket(sock *Socket, payload []byte, stack *IPStack) error {
 			// Channel is full, which is fine - reader will get to it
 		}
 	}
-
 	// Send ACK with updated window size
 	return stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
 }
@@ -305,7 +300,6 @@ func processBufferedPackets(sock *Socket, stack *IPStack) {
 	if sock.Conn.ReceiveQueue == nil || sock.Conn.ReceiveQueue.Len() == 0 {
 		return
 	}
-
 	processed := true
 	for processed && sock.Conn.ReceiveQueue.Len() > 0 {
 		processed = false
@@ -394,7 +388,6 @@ func recvTearDown(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *
 	sock.Conn.SeqNum = tcpHdr.AckNum
 	sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
 	fmt.Println("Final ACK Received, deleting TCB")
-
 	//prob
 	delete(tcpStack.Sockets, sock.SID)
 }
@@ -402,9 +395,15 @@ func recvTearDown(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *
 func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error {
 	var tcpHdr header.TCPFields
 	var localAddr, remoteAddr netip.Addr
+	fmt.Println(sock.Conn.Window.recvBuffer.Free())
 	if sock.Conn == nil {
 		return fmt.Errorf("can't send via listen socket")
 	}
+	// Calculate actual free space in receive buffer
+    availSpace := sock.Conn.Window.recvBuffer.Free()
+    if availSpace < 0 {
+        availSpace = 0
+    }
 	//fmt.Printf("Data %+v\n", data)
 	// Normal connected socket - use Conn field
 	tcpHdr = header.TCPFields{
@@ -414,7 +413,7 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
 		AckNum:     sock.Conn.AckNum,
 		DataOffset: 20,
 		Flags:      flags,
-		WindowSize: (uint16)(sock.Conn.Window.sendBuffer.Free()), // Default window size
+		WindowSize: (uint16)(availSpace), // Default window size
 	}
 	localAddr = sock.Conn.LocalAddr
 	remoteAddr = sock.Conn.RemoteAddr
