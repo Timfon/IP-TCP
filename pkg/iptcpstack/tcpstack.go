@@ -120,12 +120,10 @@ func TCPPacketHandler(packet *Packet, args []interface{}) {
 			finWaitTearDown(sock, packet, tcpHdr, stack)
 		}
 	case 6:
-		if tcpHdr.Flags&header.TCPFlagAck != 0 {
-			handleCloseWait(sock, packet, tcpHdr, stack)
-		}
+		handleCloseWait(sock, packet, tcpHdr, stack)
 	case 7:
 		if tcpHdr.Flags&header.TCPFlagFin != 0 {
-			handleTimeWait(sock, packet, tcpHdr, stack)
+			handleTimeWait(sock, tcpStack)
 		}
 	case 8:
 		if tcpHdr.Flags&header.TCPFlagAck != 0 {
@@ -209,13 +207,12 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 	}
 
 	sock.Conn.Window.RetransmissionQueue = NewRetransmissionQueue()
-	//go sock.Conn.HandleRetransmission(stack, sock, tcpstack)
-
+	go sock.Conn.HandleRetransmission(stack, sock, tcpstack)
 }
 
 func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
-	payloadOffset := int(tcpHdr.DataOffset)
-	payload := packet.Body[payloadOffset:]
+    payloadOffset := int(tcpHdr.DataOffset)
+    payload := packet.Body[payloadOffset:]
 
 	sock.Conn.SeqNum = tcpHdr.AckNum
 	if len(payload) > 0 {
@@ -354,75 +351,143 @@ func processBufferedPackets(sock *Socket, stack *IPStack) error{
 }
 
 func handleFinWait1(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
-	sock.Conn.State = 5
-	sock.Conn.SeqNum = tcpHdr.AckNum
-	sock.Conn.AckNum = tcpHdr.SeqNum + 1
-	sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
-	sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
+	if tcpHdr.Flags&header.TCPFlagAck != 0 {
+		sock.Conn.State = FinWait2
+		sock.Conn.SeqNum = tcpHdr.AckNum
+		sock.Conn.AckNum = tcpHdr.SeqNum + 1
+		sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
+		sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
+		fmt.Println("Received ACK for our FIN, moving to FIN_WAIT_2")
+		
+	}
+	if tcpHdr.Flags & header.TCPFlagFin != 0 {
+		sock.Conn.State = TimeWait
+		sock.Conn.SeqNum = tcpHdr.AckNum
+		sock.Conn.AckNum = tcpHdr.SeqNum + 1
+
+		err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+		if err != nil {
+			fmt.Printf("Error sending Ack in FIN_WAIT_1: %v\n", err)
+			return
+		}
+		fmt.Println("Received FIN-ACK, moving to TIME_WAIT")
+
+		go handleTimeWait(sock, stack.TcpStack)
+	}
 }
 
 func handleFinWait2(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
 	//basically just accepts ack messages here
+	if tcpHdr.Flags&header.TCPFlagFin != 0 {
+		// Move to TIME_WAIT
+		sock.Conn.State = TimeWait
+		sock.Conn.SeqNum = tcpHdr.AckNum
+		sock.Conn.AckNum = tcpHdr.SeqNum + 1
+		
+		// Send ACK for the FIN
+		err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+		if err != nil {
+			fmt.Printf("Error sending ACK in FIN_WAIT_2: %v\n", err)
+			return
+		}
+		fmt.Println("Received FIN, moving to TIME_WAIT")
+		
+		// Start TIME_WAIT timer
+		go handleTimeWait(sock, stack.TcpStack)
+	}
 
 }
 
 func finWaitTearDown(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) error {
 	//takes a fin and sends an ACK
-	sock.Conn.State = 7
-	sock.Conn.SeqNum = tcpHdr.AckNum
-	sock.Conn.AckNum = tcpHdr.SeqNum + 1
-	sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
-	sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
+	if sock.Conn.State == Established {
+        // Move to CLOSE_WAIT
+        sock.Conn.State = CloseWait
+        sock.Conn.SeqNum = tcpHdr.AckNum
+        sock.Conn.AckNum = tcpHdr.SeqNum + 1
+        sock.Conn.Window.RecvNext = sock.Conn.AckNum
+        sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
 
-	// fmt.Printf("Debug - Initialized RecvNext to %d\n", sock.Conn.Window.RecvNext)
-	fmt.Println("FIN received, entering Time Wait")
+        // First send ACK for the received FIN
+        err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+        if err != nil {
+            return fmt.Errorf("failed to send ACK packet: %v", err)
+        }
+        
+        // Immediately send our FIN and move to LAST_ACK
+        err = stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
+        if err != nil {
+            return fmt.Errorf("failed to send FIN packet: %v", err)
+        }
+        
+        sock.Conn.State = LastAck
+        fmt.Println("Received FIN, sent ACK+FIN, moving to LAST_ACK")
+        
+    } else {
+        // Handle FIN in FIN_WAIT_2 state
+        sock.Conn.State = TimeWait
+        sock.Conn.SeqNum = tcpHdr.AckNum
+        sock.Conn.AckNum = tcpHdr.SeqNum + 1
+        sock.Conn.Window.RecvNext = sock.Conn.AckNum
+        sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
 
-	// Send ACK
-	err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
-	if err != nil {
-		return fmt.Errorf("failed to send ACK packet: %v", err)
-	}
-	return nil
+        // Send ACK for the FIN
+        err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+        if err != nil {
+            return fmt.Errorf("failed to send ACK packet: %v", err)
+        }
+        fmt.Println("Received FIN in FIN_WAIT_2, moving to TIME_WAIT")
+        
+        // Start TIME_WAIT timer
+        go handleTimeWait(sock, stack.TcpStack)
+    }
+    
+    return nil
 }
 
-func handleTimeWait(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) error {
-	sock.Conn.SeqNum = tcpHdr.AckNum
-	sock.Conn.AckNum = tcpHdr.SeqNum + 1
-	sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
-	sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
+func handleTimeWait(sock *Socket, tcpStack *TCPStack) {
+	timer := time.NewTimer(30 * time.Second)  // Using 30 seconds instead of 4 minutes for testing
+    <-timer.C
+    
+    // After timeout, mark as closed and cleanup
+    if sock.Conn != nil && sock.Conn.State == TimeWait {
+        fmt.Println("TIME_WAIT completed, connection CLOSED")
+        sock.Conn.State = 0 // CLOSED
 
-	// fmt.Printf("Debug - Initialized RecvNext to %d\n", sock.Conn.Window.RecvNext)
-	fmt.Println("FIN received, Transmitting ACK For Confirmation and Closing")
-
-	// Send ACK
-	err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
-	if err != nil {
-		return fmt.Errorf("failed to send ACK packet: %v", err)
-	}
-	return nil
+        
+        // Find and delete the socket from TCPStack
+    	delete(tcpStack.Sockets, sock.SID)
+    }
 }
 
 func handleCloseWait(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
-	//literally just kinda stays there
-	sock.Conn.SeqNum = tcpHdr.AckNum
-	sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
-	fmt.Println("ACK Received")
-
+	// Update sequence numbers
+    sock.Conn.SeqNum = tcpHdr.AckNum
+    sock.Conn.Window.RecvNext = sock.Conn.AckNum
+    // After receiving ACK in CLOSE_WAIT, we should send our own FIN
+    // This transitions us to LAST_ACK state
+    err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
+    if err != nil {
+        fmt.Printf("Error sending FIN in CLOSE_WAIT: %v\n", err)
+        return
+    }
+    
+    // Move to LAST_ACK state
+    sock.Conn.State = LastAck
+    fmt.Println("Sent FIN, moving to LAST_ACK state")
 }
 
 func recvTearDown(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack, tcpStack *TCPStack) {
-	//
-	sock.Conn.SeqNum = tcpHdr.AckNum
-	sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
-	fmt.Println("Final ACK Received, deleting TCB")
-	//prob
-	delete(tcpStack.Sockets, sock.SID)
+	fmt.Println("Final ACK received in LAST_ACK, deleting connection")
+    
+    tcpStack.Mu.Lock()
+    delete(tcpStack.Sockets, sock.SID)
+    tcpStack.Mu.Unlock()
 }
 
 func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error {
 	var tcpHdr header.TCPFields
 	var localAddr, remoteAddr netip.Addr
-	fmt.Println(sock.Conn.Window.recvBuffer.Free())
 	if sock.Conn == nil {
 		return fmt.Errorf("can't send via listen socket")
 	}

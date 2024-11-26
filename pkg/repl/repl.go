@@ -143,27 +143,6 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
 				value.UpOrDown = false
 				stack.Interfaces[ifname] = value
 			}
-		} else if strings.HasPrefix(input, "c") {
-			parts := strings.SplitN(input, " ", 3)
-			if len(parts) != 3 {
-				fmt.Println("Usage: c <vip> <port>")
-				continue
-			}
-			vip, err := netip.ParseAddr(parts[1])
-			if err != nil {
-				fmt.Printf("Invalid IP address: %v\n", err)
-				continue
-			}
-      port, err := strconv.Atoi(parts[2])
-      if err != nil {
-        fmt.Printf("Invalid port number: %v\n", err)
-        continue
-      }
-      _, err = tcpstack.VConnect(vip, uint16(port), stack)
-      if err != nil {
-        fmt.Println(err)
-        continue
-      }
 		} else if strings.HasPrefix(input, "a") {
       parts := strings.SplitN(input, " ", 2)
       if len(parts) != 2 {
@@ -223,6 +202,16 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
                   sockState = "SYN-RECEIVED"
               case 3:
                   sockState = "ESTABLISHED"
+              case 4:
+                  sockState = "FIN-WAIT-1"
+              case 5:
+                  sockState = "FIN-WAIT-2"
+              case 6:
+                  sockState = "CLOSE-WAIT"
+              case 7:
+                  sockState = "CLOSING"
+              case 8:
+                  sockState = "LAST-ACK"
               }
               laddr = sock.Conn.LocalAddr.String()
               lport = sock.Conn.LocalPort
@@ -327,7 +316,62 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
 		if tcpstack.Sockets[int(sid)].Conn != nil{
 		fmt.Println(tcpstack.Sockets[int(sid)].Conn.Window)
 		}
-	}   
+	} else if strings.HasPrefix(input, "cl") {
+    parts := strings.SplitN(input, " ", 2)
+			if len(parts) != 2 {
+				fmt.Println("Usage: cl <sid>")
+				continue
+			}
+			sid, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fmt.Printf("Invalid socket ID: %v\n", err)
+				continue
+			}
+
+			sock := tcpstack.Sockets[sid]
+			if sock == nil {
+				fmt.Println("Socket doesn't exist")
+				continue
+			}
+
+			if sock.Conn == nil {
+				fmt.Println("Not a connection socket")
+				continue
+			}
+
+			if sock.Conn.State != iptcpstack.Established {
+				fmt.Println("Connection not established")
+				continue
+			}
+
+			err = sock.Conn.VClose(stack, sock)
+			if err != nil {
+				fmt.Printf("Error closing connection: %v\n", err)
+				continue
+			}
+			sock.Conn.State = iptcpstack.FinWait1
+  } else if strings.HasPrefix(input, "c") {
+    parts := strings.SplitN(input, " ", 3)
+    if len(parts) != 3 {
+      fmt.Println("Usage: c <vip> <port>")
+      continue
+    }
+    vip, err := netip.ParseAddr(parts[1])
+    if err != nil {
+      fmt.Printf("Invalid IP address: %v\n", err)
+      continue
+    }
+    port, err := strconv.Atoi(parts[2])
+    if err != nil {
+      fmt.Printf("Invalid port number: %v\n", err)
+      continue
+    }
+    _, err = tcpstack.VConnect(vip, uint16(port), stack)
+    if err != nil {
+      fmt.Println(err)
+      continue
+    }
+  } 
 	}
 }
 
