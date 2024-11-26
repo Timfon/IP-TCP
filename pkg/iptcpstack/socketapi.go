@@ -87,7 +87,7 @@ func NewWindow(size int) *Window {
 		DataAvailable:       make(chan struct{}, 10), // Buffer of 10 to prevent blocking on signal
 		SendUna:             0,
 		SendLBW:             0,
-		RetransmissionQueue: NewRetransmissionQueue(),
+		//RetransmissionQueue: NewRetransmissionQueue(),
 	}
 	return w
 }
@@ -142,7 +142,7 @@ func (c *VTCPConn) VRead(buf []byte) (int, error) {
 
 	// Update TCP read pointer and window size
 	c.Window.RecvLBR += uint32(n)
-	c.Window.RecvWindowSize = uint32(c.Window.recvBuffer.Free())
+	//c.Window.RecvWindowSize = uint32(c.Window.recvBuffer.Free())
 	//fmt.Printf("Debug - Read %d bytes, new window size: %d\n", n, c.Window.RecvWindowSize)
 	return n, nil
 }
@@ -158,10 +158,10 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *T
 		return 0, fmt.Errorf("connection not established")
 	}
 
-	if !c.retransmissionStarted {
-		go c.HandleRetransmission(stack, sock, tcpstack)
-		c.retransmissionStarted = true
-	}
+	//if !c.retransmissionStarted {
+	//	go c.HandleRetransmission(stack, sock, tcpstack)
+	//	c.retransmissionStarted = true
+	//}
 
 	currWritten := 0
 	c.Window.SendLBW = c.Window.SendNxt + uint32(len(data))
@@ -196,7 +196,7 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *T
 			}
 
 			// Add to retransmission queue
-			c.Window.RetransmissionQueue.AddEntry(data[currWritten:currWritten+n], c.SeqNum)
+			//c.Window.RetransmissionQueue.AddEntry(data[currWritten:currWritten+n], c.SeqNum)
 
 			// Send the data
 			err = stack.sendTCPPacket(sock, data[currWritten:currWritten+n], header.TCPFlagAck)
@@ -204,7 +204,6 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *T
 				return currWritten, fmt.Errorf("failed to send data: %v", err)
 			}
 
-			c.SeqNum += uint32(n)
 			c.Window.SendNxt += uint32(n)
 			currWritten += n
 		} else {
@@ -305,36 +304,6 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
 		delete(tcpStack.Sockets, sock.SID)
 		return nil, fmt.Errorf("failed to send initial SYN packet: %v", err)
 	}
-
-	// startTime := time.Now()
-	// retries := 0
-	// for {
-	// 	// Check if we've been trying too long
-	// 	if time.Since(startTime) > 30*time.Second {
-	// 		delete(tcpStack.Sockets, sock.SID)
-	// 		return nil, fmt.Errorf("connection timed out after 30 seconds")
-	// 	}
-	//
-	// 	// Check if connection established
-	// 	if sock.Conn.State == Established {
-	// 		return conn, nil
-	// 	}
-	// 	// Check if it's time to retry
-	// 	if time.Since(startTime) >= time.Duration(retries+1)*retryTimeout {
-	// 		if retries >= maxRetries {
-	// 			delete(tcpStack.Sockets, sock.SID)
-	// 			return nil, fmt.Errorf("connection failed after %d SYN retransmissions", maxRetries)
-	// 		}
-	//
-	// 		fmt.Printf("Retransmitting SYN (attempt %d/%d)\n", retries+1, maxRetries)
-	// 		err := ipStack.sendTCPPacket(sock, []byte{}, header.TCPFlagSyn)
-	// 		if err != nil {
-	// 			delete(tcpStack.Sockets, sock.SID)
-	// 			return nil, fmt.Errorf("failed to retransmit SYN packet: %v", err)
-	// 		}
-	// 		retries++
-	// 	}
-	// }
 	return conn, nil
 }
 
@@ -417,7 +386,7 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
 		return 0, fmt.Errorf("connection failed to establish")
 	}
 
-	buf := make([]byte, 1024)
+	buf := make([]byte, 512)
 	totalBytes := 0
 
 	for {
@@ -438,7 +407,7 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
 			}
 			bytesWritten += written
 			totalBytes += written
-			//fmt.Printf("Wrote %v bytes", written)
+			fmt.Printf("Wrote %v bytes", written)
 		}
 		if tcpStack.Sockets[conn.SID].Listen != nil {
 			tcpStack.Sockets[conn.SID].Listen.AcceptQueue <- conn

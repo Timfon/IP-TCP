@@ -252,19 +252,19 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 		} else {
 		//fmt.Println("Windowsize tcp: ", tcpHdr.WindowSize)
 		//fmt.Println("SendBuffer size: ", sock.Conn.Window.sendBuffer.Free())
-		sock.Conn.Window.ReadWindowSize = uint32(tcpHdr.WindowSize)
-		if tcpHdr.AckNum > sock.Conn.Window.SendUna {
-			bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
-			// Actually remove the acknowledged data from send buffer
-			discardBuf := make([]byte, bytesAcked)
-			_, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
-			if err != nil {
-				fmt.Printf("Error removing acked data from send buffer: %v\n", err)
-			} else {
-				//fmt.Printf("Removed %d acked bytes from send buffer\n", n)
-			}
-			// Update SendUna after successful removal
-			sock.Conn.Window.SendUna = tcpHdr.AckNum
+			sock.Conn.Window.ReadWindowSize = uint32(tcpHdr.WindowSize)
+			if tcpHdr.AckNum > sock.Conn.Window.SendUna {
+				bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
+				// Actually remove the acknowledged data from send buffer
+				discardBuf := make([]byte, bytesAcked)
+				_, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
+				if err != nil {
+					fmt.Printf("Error removing acked data from send buffer: %v\n", err)
+				} else {
+					fmt.Printf("Removed %d acked bytes from send buffer\n", n)
+				}
+				// Update SendUna after successful removal
+				sock.Conn.Window.SendUna = tcpHdr.AckNum
 			//fmt.Printf("ACK received - removed %d bytes, new SendUna: %d\n",
 			//	bytesAcked, sock.Conn.Window.SendUna)
 			
@@ -506,8 +506,8 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
 	tcpHdr = header.TCPFields{
 		SrcPort:    sock.Conn.LocalPort,
 		DstPort:    sock.Conn.RemotePort,
-		SeqNum:     sock.Conn.SeqNum,
-		AckNum:     sock.Conn.AckNum,
+		SeqNum:     sock.Conn.Window.SendNxt,
+		AckNum:     sock.Conn.Window.RecvNext,
 		DataOffset: 20,
 		Flags:      flags,
 		WindowSize: (uint16)(sock.Conn.Window.recvBuffer.Free()), // Default window size
