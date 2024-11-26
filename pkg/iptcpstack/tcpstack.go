@@ -147,6 +147,12 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 		Window:     NewWindow(65535),
 		SID:        tcpstack.NextSocketID,
 	}
+
+	newq := make(PriorityQueue, 0)
+	heap.Init(&newq)
+
+	new_Connection.ReceiveQueue = &newq
+
 	// Initialize window tracking - for first data packet, we expect the original sequence number
 	new_Connection.Window.RecvNext = tcpHdr.SeqNum
 	new_Connection.Window.RecvLBR = tcpHdr.SeqNum
@@ -208,66 +214,85 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
     payloadOffset := int(tcpHdr.DataOffset)
     payload := packet.Body[payloadOffset:]
 
-    sock.Conn.SeqNum = tcpHdr.AckNum
-    
-    // Handle ACKs regardless of payload
-    if tcpHdr.Flags&header.TCPFlagAck != 0 {
-        if tcpHdr.AckNum > sock.Conn.Window.SendUna {
-            bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
-            
-            // Remove acknowledged data from send buffer
-            discardBuf := make([]byte, bytesAcked)
-            n, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
-            if err != nil {
-                fmt.Printf("Error removing acked data from send buffer: %v\n", err)
-            } else {
-                fmt.Printf("Removed %d acked bytes from send buffer\n", n)
+	sock.Conn.SeqNum = tcpHdr.AckNum
+	if len(payload) > 0 {
+		// Write to receive buffer
+		if(sock.Conn.Window.RecvNext == tcpHdr.SeqNum ){
+			err := processInOrderPacket(sock, payload, stack)
+			if err != nil {
+				fmt.Printf("Error sending ACK: %v\n", err)
+				
+			}
+			processBufferedPackets(sock, stack)
+		} else if tcpHdr.SeqNum == sock.Conn.Window.RecvNext - 1{
+			already_read := sock.Conn.Window.RecvNext - tcpHdr.SeqNum
+			payload = payload[already_read:]
+		
+			err := processInOrderPacket(sock, payload, stack)
+			if err != nil {
+				fmt.Printf("Error sending ACK: %v\n", err)
+				
+			}
+			processBufferedPackets(sock, stack)
+		} else {
+			fmt.Printf("Early Arrival packet - adding to queue, expected %v, got %v\n",sock.Conn.Window.RecvNext,  tcpHdr.SeqNum)
+            entry:= &Item{
+                value: payload,
+                priority: tcpHdr.SeqNum,
             }
-            
-            // Update SendUna after successful removal
-            sock.Conn.Window.SendUna = tcpHdr.AckNum
-            fmt.Printf("ACK received - removed %d bytes, new SendUna: %d\n",
-                bytesAcked, sock.Conn.Window.SendUna)
-                
-            // Remove acknowledged packets from retransmission queue
-            sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
-            
-            // Update window size
-            sock.Conn.Window.ReadWindowSize = uint32(tcpHdr.WindowSize)
-        }
-    }
+            heap.Push(sock.Conn.ReceiveQueue, entry)
 
-    // Handle incoming data if present
-    if len(payload) > 0 {
-        err := processInOrderPacket(sock, payload, stack)
-        if err != nil {
-            fmt.Printf("Error processing incoming data: %v\n", err)
-        }
-    }
+			stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
+		}
+		/* */
+		} else {
+		fmt.Println("Windowsize tcp: ", tcpHdr.WindowSize)
+		fmt.Println("SendBuffer size: ", sock.Conn.Window.sendBuffer.Free())
+		sock.Conn.Window.ReadWindowSize = uint32(tcpHdr.WindowSize)
+		if tcpHdr.AckNum > sock.Conn.Window.SendUna {
+			bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
+			// Actually remove the acknowledged data from send buffer
+			discardBuf := make([]byte, bytesAcked)
+			n, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
+			if err != nil {
+				fmt.Printf("Error removing acked data from send buffer: %v\n", err)
+			} else {
+				fmt.Printf("Removed %d acked bytes from send buffer\n", n)
+			}
+			// Update SendUna after successful removal
+			sock.Conn.Window.SendUna = tcpHdr.AckNum
+			fmt.Printf("ACK received - removed %d bytes, new SendUna: %d\n",
+				bytesAcked, sock.Conn.Window.SendUna)
+			sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
+		}
+	}
 }
 
 // Helper function to process in-order packets
 func processInOrderPacket(sock *Socket, payload []byte, stack *IPStack) error {
 	// Write the payload to receive buffer
+
+
 	written, err := sock.Conn.Window.recvBuffer.Write(payload)
 	if err != nil {
 		return fmt.Errorf("error writing to receive buffer: %v", err)
 	}
 	// Update sequence numbers
+
 	sock.Conn.Window.RecvNext += uint32(written)
 	sock.Conn.AckNum = sock.Conn.Window.RecvNext
 
 	// Update receive window size
 	availSpace := sock.Conn.Window.recvBuffer.Free()
 	sock.Conn.Window.RecvWindowSize = uint32(availSpace)
-	fmt.Println(availSpace)
 
 	// Signal data availability - one signal per chunk of data
 	dataChunks := (written + 1023) / 1024 // Signal for every 1KB of data
+	
 	for i := 0; i < dataChunks; i++ {
 		select {
 		case sock.Conn.Window.DataAvailable <- struct{}{}:
-			fmt.Printf("Sent data signal %d/%d for %d bytes\n", i+1, dataChunks, written)
+			//fmt.Printf("Sent data signal %d/%d for %d bytes\n", i+1, dataChunks, written)
 		default:
 			// Channel is full, which is fine - reader will get to it
 		}
@@ -277,34 +302,52 @@ func processInOrderPacket(sock *Socket, payload []byte, stack *IPStack) error {
 }
 
 // Helper function to process buffered out-of-order packets
-func processBufferedPackets(sock *Socket, stack *IPStack) {
+func processBufferedPackets(sock *Socket, stack *IPStack) error{
+	fmt.Printf("current queue length: %v\n", sock.Conn.ReceiveQueue.Len())
 	if sock.Conn.ReceiveQueue == nil || sock.Conn.ReceiveQueue.Len() == 0 {
-		return
+		return nil
 	}
-	processed := true
-	for processed && sock.Conn.ReceiveQueue.Len() > 0 {
-		processed = false
-		item := (*sock.Conn.ReceiveQueue)[0] // Peek at next packet
+	for sock.Conn.ReceiveQueue.Len() > 0 {
+		item := heap.Pop(sock.Conn.ReceiveQueue).(*Item) // Peek at next packet
 
 		// Check if this is the next expected packet
 		if item.priority == sock.Conn.Window.RecvNext {
 			// Remove and process the packet
-			early := heap.Pop(sock.Conn.ReceiveQueue).(*Item)
-			if err := processInOrderPacket(sock, early.value, stack); err != nil {
-				fmt.Printf("Error processing buffered packet: %v\n", err)
-				return
+			written, err := sock.Conn.Window.recvBuffer.Write(item.value)
+			if err != nil {
+				return fmt.Errorf("error writing to receive buffer: %v", err)
 			}
-			processed = true // Signal that we processed a packet
+			// Update sequence numbers
+		
+			sock.Conn.Window.RecvNext += uint32(written)
+			sock.Conn.AckNum = sock.Conn.Window.RecvNext
+		
+			// Update receive window size
+			availSpace := sock.Conn.Window.recvBuffer.Free()
+			sock.Conn.Window.RecvWindowSize = uint32(availSpace)
+			
+		} else if item.priority == sock.Conn.Window.RecvNext - 1{
+			already_read := sock.Conn.Window.RecvNext - item.priority
+			payload := item.value[already_read:] 
 
-			// Signal data availability
-			select {
-			case sock.Conn.Window.DataAvailable <- struct{}{}:
-				fmt.Printf("Sent data signal for buffered packet\n")
-			default:
-				// Channel is full, which is fine
+			written, err := sock.Conn.Window.recvBuffer.Write(payload)
+			if err != nil {
+				return fmt.Errorf("error writing to receive buffer: %v", err)
 			}
+			// Update sequence numbers
+
+			sock.Conn.Window.RecvNext += uint32(written)
+			sock.Conn.AckNum = sock.Conn.Window.RecvNext
+
+			// Update receive window size
+			availSpace := sock.Conn.Window.recvBuffer.Free()
+			sock.Conn.Window.RecvWindowSize = uint32(availSpace)
+		} else if item.priority > sock.Conn.Window.RecvNext {
+			heap.Push(sock.Conn.ReceiveQueue, item)
+			break
 		}
 	}
+	return stack.sendTCPPacket(sock, []byte{}, header.TCPFlagAck)
 }
 
 func handleFinWait1(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {

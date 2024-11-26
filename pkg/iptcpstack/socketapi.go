@@ -106,12 +106,12 @@ func (c *VTCPConn) VRead(buf []byte) (int, error) {
 
 	// Calculate available data using TCP sequence numbers
 	availData := int(c.Window.RecvNext - c.Window.RecvLBR)
-	fmt.Printf("Debug - Available data: %d (RecvNext: %d, RecvLBR: %d)\n",
-		availData, c.Window.RecvNext, c.Window.RecvLBR)
+	//fmt.Printf("Debug - Available data: %d (RecvNext: %d, RecvLBR: %d)\n",
+		//availData, c.Window.RecvNext, c.Window.RecvLBR)
 
 	// Update receive window size based on buffer space
 	c.Window.RecvWindowSize = uint32(c.Window.recvBuffer.Free())
-	fmt.Printf("Debug - Updated receive window size to %d\n", c.Window.RecvWindowSize)
+	//fmt.Printf("Debug - Updated receive window size to %d\n", c.Window.RecvWindowSize)
 
 	// Wait for data if none is available
 	for availData == 0 {
@@ -141,7 +141,7 @@ func (c *VTCPConn) VRead(buf []byte) (int, error) {
 	// Update TCP read pointer and window size
 	c.Window.RecvLBR += uint32(n)
 	c.Window.RecvWindowSize = uint32(c.Window.recvBuffer.Free())
-	fmt.Printf("Debug - Read %d bytes, new window size: %d\n", n, c.Window.RecvWindowSize)
+	//fmt.Printf("Debug - Read %d bytes, new window size: %d\n", n, c.Window.RecvWindowSize)
 	return n, nil
 }
 
@@ -436,7 +436,7 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
 			}
 			bytesWritten += written
 			totalBytes += written
-			fmt.Printf("Wrote %v bytes", written)
+			//fmt.Printf("Wrote %v bytes", written)
 		}
 		if tcpStack.Sockets[conn.SID].Listen != nil {
 			tcpStack.Sockets[conn.SID].Listen.AcceptQueue <- conn
@@ -477,7 +477,7 @@ func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStac
 	totalBytes := 0
 
 	for {
-		fmt.Printf("Before read - SeqNum: %d, AckNum: %d\n", conn.SeqNum, conn.AckNum)
+		//fmt.Printf("Before read - SeqNum: %d, AckNum: %d\n", conn.SeqNum, conn.AckNum)
 		n, err := conn.VRead(buf)
 
 		if err != nil {
@@ -491,13 +491,13 @@ func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStac
 		}
 
 		if n > 0 {
-			fmt.Printf("Received %d bytes - SeqNum: %d, AckNum: %d\n", n, conn.SeqNum, conn.AckNum)
+			//fmt.Printf("Received %d bytes - SeqNum: %d, AckNum: %d\n", n, conn.SeqNum, conn.AckNum)
 			written, err := file.Write(buf[:n])
 			if err != nil {
 				return totalBytes, fmt.Errorf("failed to write to file: %v", err)
 			}
 			totalBytes += written
-			fmt.Printf("Progress: %d bytes received and written to file\n", totalBytes)
+			//fmt.Printf("Progress: %d bytes received and written to file\n", totalBytes)
 
 			// Don't break here - keep reading until timeout or error
 		} else {
