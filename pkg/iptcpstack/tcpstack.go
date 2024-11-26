@@ -201,65 +201,49 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 	}
 
 	sock.Conn.Window.RetransmissionQueue = NewRetransmissionQueue()
-	//go sock.Conn.HandleRetransmission(stack, sock, tcpstack)
-
+	go sock.Conn.HandleRetransmission(stack, sock, tcpstack)
 }
 
 func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
-	payloadOffset := int(tcpHdr.DataOffset)
-	payload := packet.Body[payloadOffset:]
+    payloadOffset := int(tcpHdr.DataOffset)
+    payload := packet.Body[payloadOffset:]
 
-	sock.Conn.SeqNum = tcpHdr.AckNum
-	if len(payload) > 0 {
-		// Write to receive buffer
-		err := processInOrderPacket(sock, payload, stack)
+    sock.Conn.SeqNum = tcpHdr.AckNum
+    
+    // Handle ACKs regardless of payload
+    if tcpHdr.Flags&header.TCPFlagAck != 0 {
+        if tcpHdr.AckNum > sock.Conn.Window.SendUna {
+            bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
+            
+            // Remove acknowledged data from send buffer
+            discardBuf := make([]byte, bytesAcked)
+            n, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
+            if err != nil {
+                fmt.Printf("Error removing acked data from send buffer: %v\n", err)
+            } else {
+                fmt.Printf("Removed %d acked bytes from send buffer\n", n)
+            }
+            
+            // Update SendUna after successful removal
+            sock.Conn.Window.SendUna = tcpHdr.AckNum
+            fmt.Printf("ACK received - removed %d bytes, new SendUna: %d\n",
+                bytesAcked, sock.Conn.Window.SendUna)
+                
+            // Remove acknowledged packets from retransmission queue
+            sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
+            
+            // Update window size
+            sock.Conn.Window.ReadWindowSize = uint32(tcpHdr.WindowSize)
+        }
+    }
 
-		// Send ACK
-		if err != nil {
-			fmt.Printf("Error sending ACK: %v\n", err)
-		}
-
-		//+=========+//
-		/*
-			if tcpHdr.AckNum > sock.Conn.Window.SendUna {
-				bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
-
-				// Actually remove the acknowledged data from send buffer
-				discardBuf := make([]byte, bytesAcked)
-				n, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
-				if err != nil {
-					fmt.Printf("Error removing acked data from send buffer: %v\n", err)
-				} else {
-					fmt.Printf("Removed %d acked bytes from send buffer\n", n)
-				}
-				// Update SendUna after successful removal
-				sock.Conn.Window.SendUna = tcpHdr.AckNum
-				fmt.Printf("ACK received - removed %d bytes, new SendUna: %d\n",
-					bytesAcked, sock.Conn.Window.SendUna)
-				sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
-			}*/
-		//+=========+//
-	} else {
-		fmt.Println("Windowsize tcp: ", tcpHdr.WindowSize)
-		fmt.Println("SendBuffer size: ", sock.Conn.Window.sendBuffer.Free())
-		sock.Conn.Window.ReadWindowSize = uint32(tcpHdr.WindowSize)
-		if tcpHdr.AckNum > sock.Conn.Window.SendUna {
-			bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
-			// Actually remove the acknowledged data from send buffer
-			discardBuf := make([]byte, bytesAcked)
-			n, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
-			if err != nil {
-				fmt.Printf("Error removing acked data from send buffer: %v\n", err)
-			} else {
-				fmt.Printf("Removed %d acked bytes from send buffer\n", n)
-			}
-			// Update SendUna after successful removal
-			sock.Conn.Window.SendUna = tcpHdr.AckNum
-			fmt.Printf("ACK received - removed %d bytes, new SendUna: %d\n",
-				bytesAcked, sock.Conn.Window.SendUna)
-			sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
-		}
-	}
+    // Handle incoming data if present
+    if len(payload) > 0 {
+        err := processInOrderPacket(sock, payload, stack)
+        if err != nil {
+            fmt.Printf("Error processing incoming data: %v\n", err)
+        }
+    }
 }
 
 // Helper function to process in-order packets
@@ -451,7 +435,6 @@ func handleCloseWait(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stac
 }
 
 func recvTearDown(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack, tcpStack *TCPStack) {
-	//
 	fmt.Println("Final ACK received in LAST_ACK, deleting connection")
     
     tcpStack.Mu.Lock()
@@ -462,7 +445,6 @@ func recvTearDown(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *
 func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) error {
 	var tcpHdr header.TCPFields
 	var localAddr, remoteAddr netip.Addr
-	fmt.Println(sock.Conn.Window.recvBuffer.Free())
 	if sock.Conn == nil {
 		return fmt.Errorf("can't send via listen socket")
 	}

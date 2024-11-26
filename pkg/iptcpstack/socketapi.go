@@ -77,7 +77,6 @@ type VTCPListener struct {
 }
 
 func NewWindow(size int) *Window {
-	fmt.Println(size)
 	w := &Window{
 		recvBuffer:          ringbuffer.New(int(size)),
 		sendBuffer:          ringbuffer.New(int(size)),
@@ -88,7 +87,6 @@ func NewWindow(size int) *Window {
 		SendLBW:             0,
 		RetransmissionQueue: NewRetransmissionQueue(),
 	}
-	fmt.Println(w.recvBuffer.Free())
 	return w
 }
 
@@ -167,7 +165,7 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *T
 		// If we have space to write
 		if availableSpace > 0 {
 			// Limit each write to MSS (1024 in this case)
-			writeLen := min(min(availableSpace, 1024), len(data)-currWritten)
+			writeLen := min(min(availableSpace, 512), len(data)-currWritten)
 			// Write to send buffer
 			n, err := c.Window.sendBuffer.Write(data[currWritten : currWritten+writeLen])
 			if err != nil {
@@ -212,28 +210,28 @@ func min(a, b int) int {
 
 func (c *VTCPConn) VClose(stack *IPStack, sock *Socket) error {
 	switch c.State {
-    case Established:
-        err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
-        if err != nil {
-            return fmt.Errorf("failed to send FIN packet: %v", err)
-        }
-        c.State = FinWait1
-        fmt.Println("Sent FIN, moving to FIN_WAIT_1")
-        
-    case CloseWait:
-        // When in CLOSE_WAIT, send FIN and move to LAST_ACK
-        err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
-        if err != nil {
-            return fmt.Errorf("failed to send FIN packet: %v", err)
-        }
-        c.State = LastAck
-        fmt.Println("Sent FIN, moving to LAST_ACK")
-        
-    default:
-        return fmt.Errorf("cannot close connection in current state: %v", c.State)
-    }
-    
-    return nil
+	case Established:
+		err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
+		if err != nil {
+			return fmt.Errorf("failed to send FIN packet: %v", err)
+		}
+		c.State = FinWait1
+		fmt.Println("Sent FIN, moving to FIN_WAIT_1")
+
+	case CloseWait:
+		// When in CLOSE_WAIT, send FIN and move to LAST_ACK
+		err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
+		if err != nil {
+			return fmt.Errorf("failed to send FIN packet: %v", err)
+		}
+		c.State = LastAck
+		fmt.Println("Sent FIN, moving to LAST_ACK")
+
+	default:
+		return fmt.Errorf("cannot close connection in current state: %v", c.State)
+	}
+
+	return nil
 }
 
 func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStack) (*VTCPConn, error) {
@@ -490,7 +488,7 @@ func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStac
 		} else {
 			// Only break on zero bytes if we've received some data already
 			if totalBytes > 0 {
-				time.Sleep(100 * time.Millisecond) // Small delay to check for more data
+				time.Sleep(1 * time.Millisecond) // Small delay to check for more data
 				select {
 				case <-conn.Window.DataAvailable:
 					continue // More data is available, keep reading
@@ -502,5 +500,6 @@ func ReceiveFile(stack *IPStack, filepath string, port uint16, tcpStack *TCPStac
 	}
 
 	fmt.Printf("Transfer complete. Total bytes: %d\n", totalBytes)
+	conn.VClose(stack, tcpStack.Sockets[conn.SID])
 	return totalBytes, nil
 }
