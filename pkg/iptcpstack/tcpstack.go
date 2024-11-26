@@ -189,6 +189,9 @@ func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields,
 	if err != nil {
 		return fmt.Errorf("failed to send ACK packet: %v", err)
 	}
+
+	//sock.Conn.Window.RetransmissionQueue = NewRetransmissionQueue()
+	//go sock.Conn.HandleRetransmission(stack, sock, tcpstack)
 	return nil
 }
 
@@ -206,8 +209,8 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 		}
 	}
 
-	// sock.Conn.Window.RetransmissionQueue = NewRetransmissionQueue()
-	// go sock.Conn.HandleRetransmission(stack, sock, tcpstack)
+	//sock.Conn.Window.RetransmissionQueue = NewRetransmissionQueue()
+	//go sock.Conn.HandleRetransmission(stack, sock, tcpstack)
 }
 
 func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) {
@@ -254,17 +257,19 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 			bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
 			// Actually remove the acknowledged data from send buffer
 			discardBuf := make([]byte, bytesAcked)
-			n, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
+			_, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
 			if err != nil {
 				fmt.Printf("Error removing acked data from send buffer: %v\n", err)
 			} else {
-				fmt.Printf("Removed %d acked bytes from send buffer\n", n)
+				//fmt.Printf("Removed %d acked bytes from send buffer\n", n)
 			}
 			// Update SendUna after successful removal
 			sock.Conn.Window.SendUna = tcpHdr.AckNum
-			fmt.Printf("ACK received - removed %d bytes, new SendUna: %d\n",
-				bytesAcked, sock.Conn.Window.SendUna)
-			sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
+			//fmt.Printf("ACK received - removed %d bytes, new SendUna: %d\n",
+			//	bytesAcked, sock.Conn.Window.SendUna)
+			
+			
+				//sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
 		}
 	}
 }
@@ -496,10 +501,6 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
 		return fmt.Errorf("can't send via listen socket")
 	}
 	// Calculate actual free space in receive buffer
-	availSpace := sock.Conn.Window.recvBuffer.Free()
-	if availSpace < 0 {
-		availSpace = 0
-	}
 	//fmt.Printf("Data %+v\n", data)
 	// Normal connected socket - use Conn field
 	tcpHdr = header.TCPFields{
@@ -509,7 +510,7 @@ func (stack *IPStack) sendTCPPacket(sock *Socket, data []byte, flags uint8) erro
 		AckNum:     sock.Conn.AckNum,
 		DataOffset: 20,
 		Flags:      flags,
-		WindowSize: (uint16)(availSpace), // Default window size
+		WindowSize: (uint16)(sock.Conn.Window.recvBuffer.Free()), // Default window size
 	}
 	localAddr = sock.Conn.LocalAddr
 	remoteAddr = sock.Conn.RemoteAddr

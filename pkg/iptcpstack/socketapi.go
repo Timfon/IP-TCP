@@ -165,7 +165,7 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *T
 		receiverWindow := int(c.Window.ReadWindowSize)
 
 		// Check for zero window condition
-		if receiverWindow == 0 || c.Window.recvBuffer.IsFull() {
+		if receiverWindow == 0 {
 			fmt.Printf("Zero window detected, starting window probing\n")
 			err := c.handleZeroWindow(stack, sock)
 			if err != nil {
@@ -292,6 +292,7 @@ func (tcpStack *TCPStack) VConnect(addr netip.Addr, port uint16, ipStack *IPStac
 	tcpStack.Sockets[sock.SID] = sock
 
 	// Initial SYN send
+	
 	err := ipStack.sendTCPPacket(sock, []byte{}, header.TCPFlagSyn)
 	if err != nil {
 		delete(tcpStack.Sockets, sock.SID)
