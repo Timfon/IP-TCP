@@ -118,7 +118,7 @@ func (c *VTCPConn) VRead(buf []byte) (int, error) {
 		select {
 		case <-c.Window.DataAvailable:
 			availData = int(c.Window.RecvNext - c.Window.RecvLBR)
-			fmt.Printf("Debug - Received notification, now available: %d\n", availData)
+			//fmt.Printf("Debug - Received notification, now available: %d\n", availData)
 		case <-time.After(5 * time.Second):
 			if c.ReceiveQueue == nil || c.ReceiveQueue.Len() == 0 {
 				return 0, fmt.Errorf("read timeout")
@@ -142,7 +142,6 @@ func (c *VTCPConn) VRead(buf []byte) (int, error) {
 	c.Window.RecvLBR += uint32(n)
 	c.Window.RecvWindowSize = uint32(c.Window.recvBuffer.Free())
 	fmt.Printf("Debug - Read %d bytes, new window size: %d\n", n, c.Window.RecvWindowSize)
-
 	return n, nil
 }
 
@@ -153,65 +152,61 @@ func (w *Window) RemoveAckedData(bytesAcked uint32) {
 }
 
 func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *TCPStack) (int, error) {
-    if c.State != Established {
-        return 0, fmt.Errorf("connection not established")
-    }
-
-    currWritten := 0
-
+	if c.State != Established {
+		return 0, fmt.Errorf("connection not established")
+	}
+	currWritten := 0
 	c.Window.SendLBW = c.Window.SendNxt + uint32(len(data))
-    for c.Window.SendNxt < c.Window.SendLBW {
-        // Get available space from both send buffer and receiver window
-        sendBufferSpace := c.Window.sendBuffer.Free()
-        receiverWindow := int(c.Window.ReadWindowSize)
-        availableSpace := min(sendBufferSpace, receiverWindow)
-        // If we have space to write
-        if availableSpace > 0 {
-            // Limit each write to MSS (1024 in this case)
-            writeLen := min(min(availableSpace, 1024), len(data) - currWritten)
-            
-            // Write to send buffer
-            n, err := c.Window.sendBuffer.Write(data[currWritten : currWritten+writeLen])
-            if err != nil {
-                return currWritten, fmt.Errorf("failed to write to send buffer: %v", err)
-            }
+	for c.Window.SendNxt < c.Window.SendLBW {
+		// Get available space from both send buffer and receiver window
+		sendBufferSpace := c.Window.sendBuffer.Free()
+		receiverWindow := int(c.Window.ReadWindowSize)
+		availableSpace := min(sendBufferSpace, receiverWindow)
+		// If we have space to write
+		if availableSpace > 0 {
+			// Limit each write to MSS (1024 in this case)
+			writeLen := min(min(availableSpace, 1024), len(data)-currWritten)
+			// Write to send buffer
+			n, err := c.Window.sendBuffer.Write(data[currWritten : currWritten+writeLen])
+			if err != nil {
+				return currWritten, fmt.Errorf("failed to write to send buffer: %v", err)
+			}
 
-            // Add to retransmission queue
-            c.Window.RetransmissionQueue.AddEntry(data[currWritten:currWritten+n], c.SeqNum)
+			// Add to retransmission queue
+			c.Window.RetransmissionQueue.AddEntry(data[currWritten:currWritten+n], c.SeqNum)
 
-            // Send the data
-            err = stack.sendTCPPacket(sock, data[currWritten:currWritten+n], header.TCPFlagAck)
-            if err != nil {
-                return currWritten, fmt.Errorf("failed to send data: %v", err)
-            }
+			// Send the data
+			err = stack.sendTCPPacket(sock, data[currWritten:currWritten+n], header.TCPFlagAck)
+			if err != nil {
+				return currWritten, fmt.Errorf("failed to send data: %v", err)
+			}
 
-            //c.SeqNum += uint32(n)
-            c.Window.SendNxt+= uint32(n)
-            currWritten += n
-        }
+			c.SeqNum += uint32(n)
+			c.Window.SendNxt += uint32(n)
+			currWritten += n
+		}
 
-        // If we haven't written everything, wait before trying again
-        if currWritten < len(data) {
-            // Wait a bit before trying again (use retransmission timeout as reference)
-            if c.Window.RetransmissionQueue.RTO > 0 {
-                time.Sleep(c.Window.RetransmissionQueue.RTO)
-            } else {
-                time.Sleep(100 * time.Millisecond) // Default fallback
-            }
-        }
-    }
+		// If we haven't written everything, wait before trying again
+		if currWritten < len(data) {
+			// Wait a bit before trying again (use retransmission timeout as reference)
+			if c.Window.RetransmissionQueue.RTO > 0 {
+				time.Sleep(c.Window.RetransmissionQueue.RTO)
+			} else {
+				//time.Sleep(100 * time.Millisecond) // Default fallback
+			}
+		}
+	}
 
-    return currWritten, nil
+	return currWritten, nil
 }
 
 // Utility function to find minimum of two integers
 func min(a, b int) int {
-    if a < b {
-        return a
-    }
-    return b
+	if a < b {
+		return a
+	}
+	return b
 }
-
 
 func (c *VTCPConn) VClose(stack *IPStack, sock *Socket) error {
 	if c.State != Established {
@@ -404,10 +399,8 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
 		if err != nil {
 			return totalBytes, fmt.Errorf("failed to read from file: %v", err)
 		}
-
 		// Keep writing until all data from this read is sent
 		bytesWritten := 0
-
 		for bytesWritten < n {
 			written, err := conn.VWrite(buf[bytesWritten:n], stack, tcpStack.Sockets[conn.SID], tcpStack)
 			if err != nil {
@@ -417,7 +410,6 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
 			totalBytes += written
 			fmt.Printf("Wrote %v bytes", written)
 		}
-
 		if tcpStack.Sockets[conn.SID].Listen != nil {
 			tcpStack.Sockets[conn.SID].Listen.AcceptQueue <- conn
 		}
