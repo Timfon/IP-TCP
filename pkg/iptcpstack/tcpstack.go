@@ -154,6 +154,7 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 	new_Connection.ReceiveQueue = &newq
 
 	// Initialize window tracking - for first data packet, we expect the original sequence number
+	new_Connection.Window.SendNxt = new_Connection.SeqNum
 	new_Connection.Window.RecvNext = tcpHdr.SeqNum
 	new_Connection.Window.RecvLBR = tcpHdr.SeqNum
 	new_Connection.Window.ReadWindowSize = uint32(tcpHdr.WindowSize)
@@ -178,6 +179,7 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack) error {
 	sock.Conn.State = 3
 	sock.Conn.SeqNum = tcpHdr.AckNum
+	sock.Conn.Window.SendNxt = tcpHdr.AckNum
 	sock.Conn.AckNum = tcpHdr.SeqNum + 1
 	sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
 	sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
@@ -257,7 +259,7 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 				bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
 				// Actually remove the acknowledged data from send buffer
 				discardBuf := make([]byte, bytesAcked)
-				_, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
+				n, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
 				if err != nil {
 					fmt.Printf("Error removing acked data from send buffer: %v\n", err)
 				} else {
