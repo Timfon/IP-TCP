@@ -303,7 +303,6 @@ func processInOrderPacket(sock *Socket, payload []byte, stack *IPStack) error {
 
 // Helper function to process buffered out-of-order packets
 func processBufferedPackets(sock *Socket, stack *IPStack) error{
-	fmt.Printf("current queue length: %v\n", sock.Conn.ReceiveQueue.Len())
 	if sock.Conn.ReceiveQueue == nil || sock.Conn.ReceiveQueue.Len() == 0 {
 		return nil
 	}

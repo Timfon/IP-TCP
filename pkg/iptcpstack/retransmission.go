@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
 	"github.com/google/netstack/tcpip/header"
 )
 
@@ -18,6 +17,8 @@ type RetransmissionEntry struct {
 	SeqNum   uint32
 	SendTime time.Time
 	Retries  uint32
+	RTO     time.Duration
+	
 }
 
 type RetransmissionQueue struct {
@@ -28,7 +29,7 @@ type RetransmissionQueue struct {
 	beta    float64       // RTO multiplier (typically 2.0)
 	RTOMin  time.Duration // Minimum allowed RTO
 	RTOMax  time.Duration // Maximum allowed RTO
-	RTO     time.Duration
+	RTO time.Duration
 }
 
 // Initialize the retransmission queue
@@ -120,13 +121,15 @@ func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket, tcpStack *
 				if timeSinceLastSend >= c.Window.RetransmissionQueue.RTO {
 					if entry.Retries >= maxRetries {
 						c.Window.RetransmissionQueue.mutex.Unlock()
-						c.VClose(stack, sock)
+						tcpStack.Mu.Lock()
+						delete(tcpStack.Sockets, sock.SID)
+						tcpStack.Mu.Unlock()
 						return fmt.Errorf("connection timeout after %d retries", maxRetries)
 					}
 
 					// Log before sending to ensure we see the retransmission attempt
 					fmt.Printf("Retransmitting packet (Seq: %d, Retry: %d/%d, RTO: %v)\n",
-						entry.SeqNum, entry.Retries+1, maxRetries, c.Window.RetransmissionQueue.RTO)
+						entry.SeqNum, entry.Retries+1, maxRetries, entry.RTO)
 
 					// Handle zero window condition
 					if c.Window.ReadWindowSize == 0 {
@@ -148,14 +151,14 @@ func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket, tcpStack *
 					// Update entry information
 					entry.Retries++
 					entry.SendTime = now
+					entry.RTO = c.Window.RetransmissionQueue.RTO
 
 					// Exponential backoff for RTO
-					if entry.Retries > 0 {
-						// Double RTO but don't exceed maximum
-						c.Window.RetransmissionQueue.RTO *= 2
-						if c.Window.RetransmissionQueue.RTO > c.Window.RetransmissionQueue.RTOMax {
-							c.Window.RetransmissionQueue.RTO = c.Window.RetransmissionQueue.RTOMax
-						}
+					for i := 0; uint32(i) < entry.Retries; i++ {
+						entry.RTO *= 2
+					}
+					if entry.RTO > c.Window.RetransmissionQueue.RTOMax {
+						entry.RTO =  c.Window.RetransmissionQueue.RTOMax
 					}
 
 					// Add some spacing between retransmissions of different packets
@@ -175,6 +178,7 @@ func (rq *RetransmissionQueue) AddEntry(data []byte, seqNum uint32) {
 		Data:     make([]byte, len(data)), // Make a copy of the data
 		SeqNum:   seqNum,
 		SendTime: time.Now(),
+		RTO: rq.RTO,
 	}
 	copy(entry.Data, data)
 	rq.Entries = append(rq.Entries, entry)
