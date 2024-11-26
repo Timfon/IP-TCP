@@ -165,17 +165,17 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *T
 		receiverWindow := int(c.Window.ReadWindowSize)
 
 		// Check for zero window condition
-		// fmt.Println(receiverWindow)
-		// fmt.Println(c.Window.recvBuffer.IsFull())
-		// if receiverWindow == 0 || c.Window.recvBuffer.IsFull() {
-		// 	fmt.Printf("Zero window detected, starting window probing\n")
-		// 	err := c.handleZeroWindow(stack, sock)
-		// 	if err != nil {
-		// 		return currWritten, fmt.Errorf("zero window probe failed: %v", err)
-		// 	}
-		// 	// After successful probe, get updated window size
-		// 	receiverWindow = int(c.Window.ReadWindowSize)
-		// }
+		fmt.Println(receiverWindow)
+		fmt.Println(c.Window.recvBuffer.IsFull())
+		if receiverWindow == 0 || c.Window.recvBuffer.IsFull() {
+			fmt.Printf("Zero window detected, starting window probing\n")
+			err := c.handleZeroWindow(stack, sock)
+			if err != nil {
+				return currWritten, fmt.Errorf("zero window probe failed: %v", err)
+			}
+			// After successful probe, get updated window size
+			receiverWindow = int(c.Window.ReadWindowSize)
+		}
 
 		availableSpace := min(sendBufferSpace, receiverWindow)
 
