@@ -259,11 +259,11 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 				bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
 				// Actually remove the acknowledged data from send buffer
 				discardBuf := make([]byte, bytesAcked)
-				n, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
+				_, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
 				if err != nil {
 					fmt.Printf("Error removing acked data from send buffer: %v\n", err)
 				} else {
-					fmt.Printf("Removed %d acked bytes from send buffer\n", n)
+					//fmt.Printf("Removed %d acked bytes from send buffer\n", n)
 				}
 				// Update SendUna after successful removal
 				sock.Conn.Window.SendUna = tcpHdr.AckNum

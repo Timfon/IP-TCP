@@ -231,6 +231,7 @@ func min(a, b int) int {
 func (c *VTCPConn) VClose(stack *IPStack, sock *Socket) error {
 	switch c.State {
 	case Established:
+		sock.Conn.Window.SendNxt = sock.Conn.Window.SendNxt + 1
 		err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
 		if err != nil {
 			return fmt.Errorf("failed to send FIN packet: %v", err)
@@ -240,6 +241,7 @@ func (c *VTCPConn) VClose(stack *IPStack, sock *Socket) error {
 
 	case CloseWait:
 		// When in CLOSE_WAIT, send FIN and move to LAST_ACK
+		sock.Conn.Window.SendNxt = sock.Conn.Window.SendNxt + 1
 		err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
 		if err != nil {
 			return fmt.Errorf("failed to send FIN packet: %v", err)
@@ -407,12 +409,13 @@ func SendFile(stack *IPStack, filepath string, destAddr netip.Addr, port uint16,
 			}
 			bytesWritten += written
 			totalBytes += written
-			fmt.Printf("Wrote %v bytes", written)
 		}
 		if tcpStack.Sockets[conn.SID].Listen != nil {
 			tcpStack.Sockets[conn.SID].Listen.AcceptQueue <- conn
 		}
 	}
+
+	conn.VClose(stack, tcpStack.Sockets[conn.SID])
 	return totalBytes, nil
 }
 
