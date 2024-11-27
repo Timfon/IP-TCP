@@ -42,7 +42,7 @@ func NewRetransmissionQueue() *RetransmissionQueue {
 		beta:    2.0,             // RTO multiplier
 		RTOMin:  1 * time.Millisecond,
 		RTOMax:  60 * time.Second,
-		RTO:     1 * time.Second, // Initial RTO guess
+		RTO:     250 * time.Millisecond, // Initial RTO guess
 	}
 }
 
@@ -65,73 +65,32 @@ func (rq *RetransmissionQueue) updateRTT(measuredRTT time.Duration) {
 
 func (c *VTCPConn) handleZeroWindow(stack *IPStack, sock *Socket) error {
 	fmt.Println("ZERO WINDOW CONDITION DETECTED")
-	maxProbes := 10
-	probeInterval := time.Second // Start with 1 second interval
-	maxBackoff := 60 * time.Second
-
-	// Create probe data - try to peek at first byte in send buffer
-	probe := []byte{0}
+	probeInterval := 1 * time.Second // Start with 1 second
+	
+	probe := []byte{0} // Just send a zero byte as probe
 	peekBuf := make([]byte, 1)
 	if n, err := c.Window.sendBuffer.Read(peekBuf); n == 1 && err == nil {
+		// If we successfully read a byte, use it as probe and put it back
 		probe[0] = peekBuf[0]
-		c.Window.sendBuffer.Write(peekBuf) // Put the byte back
-		c.Window.SendNxt += 1
-		c.SeqNum += 1
+		c.Window.sendBuffer.Write(peekBuf)
 	}
-
-	for i := 0; i < maxProbes; i++ {
-		// Add probe to retransmission queue
-		c.Window.RetransmissionQueue.AddEntry(probe, c.SeqNum)
-
-		// Send probe packet
+	for { // Limit max retries
+		// Send 1-byte probe
+		// Try to peek at first byte in send buffer if available
 		err := stack.sendTCPPacket(sock, probe, header.TCPFlagAck)
 		if err != nil {
 			return fmt.Errorf("failed to send zero window probe: %v", err)
 		}
-
-		// Create channels for synchronization
-		windowUpdated := make(chan bool, 1)
-		timeout := make(chan bool, 1)
-
-		// Start timeout goroutine
-		go func() {
-			time.Sleep(probeInterval)
-			timeout <- true
-		}()
-
-		// Start window monitoring goroutine
-		go func() {
-			ticker := time.NewTicker(100 * time.Millisecond)
-			defer ticker.Stop()
-			
-			for {
-				select {
-				case <-ticker.C:
-					if c.Window.ReadWindowSize > 0 {
-						windowUpdated <- true
-						return
-					}
-				case <-timeout:
-					return
-				}
-			}
-		}()
-
-		// Wait for either window update or timeout
-		select {
-		case <-windowUpdated:
-			fmt.Printf("Window opened: new size %d\n", c.Window.ReadWindowSize)
+		// Wait for response with exponential backoff
+		time.Sleep(probeInterval)
+		// Check if window has opened
+		fmt.Println("Checking window size:", c.Window.recvBuffer.Free())
+		if c.Window.recvBuffer.Free() > 0 {
 			return nil
-		case <-timeout:
-			if probeInterval < maxBackoff {
-				probeInterval *= 2 // Exponential backoff
-			}
-			fmt.Printf("Probe timeout %d/%d, next interval: %v\n", 
-				i+1, maxProbes, probeInterval)
-			continue
 		}
+		// Exponential backoff for probe interval
 	}
-	return fmt.Errorf("zero window condition persisted after %d probes", maxProbes)
+	return fmt.Errorf("zero window condition persisted after max retries")
 }
 
 func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket, tcpStack *TCPStack) error {
@@ -172,7 +131,7 @@ func (c *VTCPConn) HandleRetransmission(stack *IPStack, sock *Socket, tcpStack *
                         fmt.Printf("Retransmitting unacked packet (Seq: %d, Retry: %d/%d, Last Acked: %d)\n",
                             entry.SeqNum, entry.Retries+1, maxRetries, c.Window.SendUna)
 
-                        err := stack.sendTCPPacket(sock, entry.Data, header.TCPFlagAck)
+                        err := stack.sendTCPPacket(sock, entry.Data, header.TCPFlagAck, entry.SeqNum)
                         if err != nil {
                             c.Window.RetransmissionQueue.mutex.Unlock()
                             return fmt.Errorf("failed to retransmit packet: %v", err)
