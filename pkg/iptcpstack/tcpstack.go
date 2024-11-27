@@ -202,6 +202,8 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 	sock.Conn.State = 3
 	sock.Conn.Window.RecvNext = tcpHdr.SeqNum
 	sock.Conn.Window.RecvLBR = tcpHdr.SeqNum
+	sock.Conn.Window.SendNxt = tcpHdr.AckNum
+	sock.Conn.SeqNum = tcpHdr.AckNum
 	// Find the listening socket that created this connection
 	for _, s := range tcpstack.Sockets {
 		if s.Listen != nil && s.Listen.LocalPort == sock.Conn.LocalPort {
@@ -259,11 +261,11 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 				bytesAcked := tcpHdr.AckNum - sock.Conn.Window.SendUna
 				// Actually remove the acknowledged data from send buffer
 				discardBuf := make([]byte, bytesAcked)
-				n, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
+				_, err := sock.Conn.Window.sendBuffer.Read(discardBuf)
 				if err != nil {
 					fmt.Printf("Error removing acked data from send buffer: %v\n", err)
 				} else {
-					fmt.Printf("Removed %d acked bytes from send buffer\n", n)
+					//fmt.Printf("Removed %d acked bytes from send buffer\n", n)
 				}
 				// Update SendUna after successful removal
 				sock.Conn.Window.SendUna = tcpHdr.AckNum
