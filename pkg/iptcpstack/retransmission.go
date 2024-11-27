@@ -1,4 +1,5 @@
 package iptcpstack
+
 import (
 	"fmt"
 	"sync"
@@ -7,7 +8,7 @@ import (
 )
 
 const (
-	maxRetries   = 5
+	maxRetries   = 3
 	retryTimeout = 3 * time.Second
 )
 
@@ -17,6 +18,7 @@ type RetransmissionEntry struct {
 	SendTime time.Time
 	Retries  uint32
 	RTO     time.Duration
+	
 }
 
 type RetransmissionQueue struct {
@@ -82,8 +84,8 @@ func (c *VTCPConn) handleZeroWindow(stack *IPStack, sock *Socket) error {
 		// Wait for response with exponential backoff
 		time.Sleep(probeInterval)
 		// Check if window has opened
-		fmt.Println("Checking window size:", c.Window.ReadWindowSize)
-		if c.Window.ReadWindowSize > 0 {
+		fmt.Println("Checking window size:", c.Window.recvBuffer.Free())
+		if c.Window.recvBuffer.Free() > 0 {
 			return nil
 		}
 		// Exponential backoff for probe interval

@@ -158,25 +158,31 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *T
 		return 0, fmt.Errorf("connection not established")
 	}
 
+	//if !c.retransmissionStarted {
+	//	go c.HandleRetransmission(stack, sock, tcpstack)
+	//	c.retransmissionStarted = true
+	//}
+
 	currWritten := 0
-	if c.Window.ReadWindowSize == 0{
-		fmt.Printf("Zero window detected, starting window probing\n")
-		err := c.handleZeroWindow(stack, sock)
-		if err != nil {
-			return currWritten, fmt.Errorf("zero window probe failed: %v", err)
-		}
-	}
+	fmt.Println(c.Window.SendNxt)
+	c.Window.SendLBW = c.Window.SendNxt + uint32(len(data))
+
 	for c.Window.SendNxt < c.Window.SendLBW {
 		// Get available space from both send buffer and receiver window
 		sendBufferSpace := c.Window.sendBuffer.Free()
 		receiverWindow := int(c.Window.ReadWindowSize)
 
 		// Check for zero window condition
-		// fmt.Println("FREE:", c.Window.recvBuffer.Free())
-		// fmt.Println("READWINDOWSIZE", c.Window.ReadWindowSize)
-		// fmt.Println("RECVLBR", c.Window.RecvLBR)
-		// fmt.Println("RECVWINDOWSIZE", c.Window.RecvWindowSize)
-		// fmt.Println("RECVNEXT", c.Window.RecvNext)
+		if receiverWindow == 0 {
+			fmt.Printf("Zero window detected, starting window probing\n")
+			err := c.handleZeroWindow(stack, sock)
+			if err != nil {
+				return currWritten, fmt.Errorf("zero window probe failed: %v", err)
+			}
+			// After successful probe, get updated window size
+			receiverWindow = int(c.Window.ReadWindowSize)
+		}
+
 		availableSpace := min(sendBufferSpace, receiverWindow)
 
 		// If we have space to write
@@ -189,6 +195,9 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *T
 			if err != nil {
 				return currWritten, fmt.Errorf("failed to write to send buffer: %v", err)
 			}
+
+			fmt.Println(c.Window.SendNxt)
+
 			c.Window.RetransmissionQueue.AddEntry(data[currWritten:currWritten+n], c.Window.SendNxt)
 			// Send the data
 			err = stack.sendTCPPacket(sock, data[currWritten:currWritten+n], header.TCPFlagAck)
