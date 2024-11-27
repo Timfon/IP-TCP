@@ -87,7 +87,7 @@ func NewWindow(size int) *Window {
 		DataAvailable:       make(chan struct{}, 10), // Buffer of 10 to prevent blocking on signal
 		SendUna:             0,
 		SendLBW:             0,
-		//RetransmissionQueue: NewRetransmissionQueue(),
+		RetransmissionQueue: NewRetransmissionQueue(),
 	}
 	return w
 }

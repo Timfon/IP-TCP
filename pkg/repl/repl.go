@@ -172,12 +172,15 @@ func StartRepl(stack *iptcpstack.IPStack, tcpstack *iptcpstack.TCPStack, hostOrR
       fmt.Printf("Invalid port number: %v\n", err)
       continue
     }
-    numBytes, err := iptcpstack.SendFile(stack, filepath, destAddr, uint16(port), tcpstack)
-    if err != nil {
-      fmt.Println(err)
-      continue
-    }
-    fmt.Printf("Sent %d bytes\n", numBytes)
+    go func() {
+      numBytes, err := iptcpstack.SendFile(stack, filepath, destAddr, uint16(port), tcpstack)
+      if err != nil {
+        fmt.Println(err)
+        return
+      }
+      fmt.Printf("Sent %d bytes\n", numBytes)
+    }()
+    fmt.Println("File transfer started in background")
   } else if strings.HasPrefix(input, "ls") {
       w := tabwriter.NewWriter(os.Stdout, 1, 1, 3, ' ', 0)
       fmt.Fprintln(w, "SID\tLAddr\tLPort\tRAddr\tRPort\tStatus")
