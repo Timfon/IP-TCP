@@ -202,6 +202,8 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 	sock.Conn.State = 3
 	sock.Conn.Window.RecvNext = tcpHdr.SeqNum
 	sock.Conn.Window.RecvLBR = tcpHdr.SeqNum
+	sock.Conn.Window.SendNxt = tcpHdr.AckNum
+	sock.Conn.SeqNum = tcpHdr.AckNum
 	// Find the listening socket that created this connection
 	for _, s := range tcpstack.Sockets {
 		if s.Listen != nil && s.Listen.LocalPort == sock.Conn.LocalPort {

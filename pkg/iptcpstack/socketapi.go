@@ -164,6 +164,7 @@ func (c *VTCPConn) VWrite(data []byte, stack *IPStack, sock *Socket, tcpstack *T
 	//}
 
 	currWritten := 0
+	fmt.Println(c.Window.SendNxt)
 	c.Window.SendLBW = c.Window.SendNxt + uint32(len(data))
 
 	for c.Window.SendNxt < c.Window.SendLBW {
@@ -231,7 +232,7 @@ func min(a, b int) int {
 func (c *VTCPConn) VClose(stack *IPStack, sock *Socket) error {
 	switch c.State {
 	case Established:
-		sock.Conn.Window.SendNxt = sock.Conn.Window.SendNxt + 1
+		sock.Conn.Window.SendNxt = sock.Conn.Window.SendNxt
 		err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
 		if err != nil {
 			return fmt.Errorf("failed to send FIN packet: %v", err)
@@ -241,7 +242,7 @@ func (c *VTCPConn) VClose(stack *IPStack, sock *Socket) error {
 
 	case CloseWait:
 		// When in CLOSE_WAIT, send FIN and move to LAST_ACK
-		sock.Conn.Window.SendNxt = sock.Conn.Window.SendNxt + 1
+		sock.Conn.Window.SendNxt = sock.Conn.Window.SendNxt
 		err := stack.sendTCPPacket(sock, []byte{}, header.TCPFlagFin)
 		if err != nil {
 			return fmt.Errorf("failed to send FIN packet: %v", err)
