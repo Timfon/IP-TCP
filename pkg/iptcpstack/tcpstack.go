@@ -179,12 +179,16 @@ func handleSynReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 func handleSynAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, stack *IPStack, tcpstack *TCPStack) error {
 	sock.Conn.State = 3
 	sock.Conn.SeqNum = tcpHdr.AckNum
+	sock.Conn.Window.ReadWindowSize = uint32(tcpHdr.WindowSize)
 	sock.Conn.Window.SendNxt = tcpHdr.AckNum
+	fmt.Printf("test %v\n",  sock.Conn.Window.ReadWindowSize)
+	sock.Conn.Window.SendLBW = sock.Conn.Window.SendNxt + sock.Conn.Window.ReadWindowSize
 	sock.Conn.Window.SendUna = tcpHdr.AckNum
 	sock.Conn.AckNum = tcpHdr.SeqNum + 1
 	sock.Conn.Window.RecvNext = sock.Conn.AckNum // Add this line
 	sock.Conn.Window.RecvLBR = tcpHdr.SeqNum + 1
-	sock.Conn.Window.ReadWindowSize = uint32(tcpHdr.WindowSize)
+
+	
 	// fmt.Printf("Debug - Initialized RecvNext to %d\n", sock.Conn.Window.RecvNext)
 	fmt.Println("SYN-ACK received, connection established")
 	// Send ACK
@@ -204,6 +208,7 @@ func handleAckReceived(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 	sock.Conn.Window.RecvNext = tcpHdr.SeqNum
 	sock.Conn.Window.RecvLBR = tcpHdr.SeqNum
 	sock.Conn.Window.SendNxt = tcpHdr.AckNum
+	sock.Conn.Window.SendLBW = sock.Conn.Window.SendNxt + uint32(tcpHdr.WindowSize)
 	sock.Conn.SeqNum = tcpHdr.AckNum
 	sock.Conn.Window.SendUna = tcpHdr.AckNum
 	// Find the listening socket that created this connection
@@ -271,12 +276,8 @@ func handleEstablished(sock *Socket, packet *Packet, tcpHdr header.TCPFields, st
 			}
 			// Update SendUna after successful removal
 			sock.Conn.Window.SendUna = tcpHdr.AckNum
-			sock.Conn.Window.RetransmissionQueue.
-
-				//fmt.Printf("ACK received - removed %d bytes, new SendUna: %d\n",
-				//	bytesAcked, sock.Conn.Window.SendUna)
-
-			RemoveAckedEntries(tcpHdr.AckNum)
+			sock.Conn.Window.RetransmissionQueue.RemoveAckedEntries(tcpHdr.AckNum)
+			sock.Conn.Window.SendLBW = sock.Conn.Window.SendUna + uint32(tcpHdr.WindowSize)
 		}
 	}
 }
